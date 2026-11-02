@@ -261,6 +261,25 @@ function leaveMorning() {
 
 /* ---------- 정리 화면 보조(진열대 정리 개편) ---------- */
 
+// 시안의 선 아이콘(액션 시트·정리 안내)
+const SVG = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+const ICO = {
+  move: SVG('<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>'),
+  store: SVG('<path d="M3 11l9-7 9 7v9H3z"/><path d="M12 18v-7M9 14l3-3 3 3"/>'),
+  merge: SVG('<path d="M6 4l6 8 6-8M12 12v8"/>'),
+  up: SVG('<path d="M12 20V6M7 11l5-5 5 5M5 4h14"/>'),
+  sell: SVG('<path d="M6 8h12l-1 12H7z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>'),
+  out: SVG('<path d="M3 11l9-7 9 7v9H3z"/><path d="M12 11v7M9 14l3-3 3 3"/>'),
+  skip: SVG('<path d="M5 12h14M13 6l6 6-6 6"/>'),
+  hand: SVG('<path d="M8 13V6a1.5 1.5 0 0 1 3 0v6M11 11V4.5a1.5 1.5 0 0 1 3 0V11M14 11V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-3l-2.5-4a1.5 1.5 0 0 1 2.5-1.6L8 14"/>'),
+  house: SVG('<path d="M3 11l9-7 9 7v9H3z"/><path d="M9 20v-6h6v6"/>'),
+};
+
+let pendingAct = null;
+// 받침에 맞춘 조사: 약초와 · 달빛 버섯과
+const wa = (w) => { const c = w.charCodeAt(w.length - 1) - 0xac00; return `${w}${c >= 0 && c < 11172 && c % 28 ? '과' : '와'}`; }; // 시트에서 고른 행동(창고에 넣기) — 하단 주 버튼으로 확정
+
+
 // 합성을 실제로 해 본 상태(미리보기 숫자가 확정 후 값과 같도록)
 function mergedState() {
   if (!merging) return null;
@@ -304,6 +323,8 @@ function goodSpotsHTML(vdim) {
 function renderStore(peek) {
   const row = $('store-row');
   const slots = s.storageSlots ?? G.STORAGE_START;
+  row.hidden = !(s.storage?.length || (!peek && !ghost && !merging && (sel?.kind === 'piece' || (sel?.kind === 'hand' && s.phase === 'place'))));
+  if (row.hidden) return;
   const target = !peek && (sel?.kind === 'piece' || (sel?.kind === 'hand' && s.phase === 'place')) && !merging && !ghost;
   const mat = new Set(merging ? merging.set.map((q) => q.uid) : []);
   let cells = '';
@@ -314,17 +335,17 @@ function renderStore(peek) {
       cells += `<button class="sslot full${sel?.kind === 'stored' && sel.uid === p.uid ? ' sel' : ''}${mat.has(p.uid) ? ' mat' : ''}" data-stored="${p.uid}" ${peek ? 'tabindex="-1"' : ''} aria-label="${displayName(p)} ${roman(p.g)} · ${p.left}일 남음">
         <img src="${itemImg(imgKey(p))}" alt=""><span class="r">${roman(p.g)}</span><em class="${last ? 'last' : ''}">${p.left}일 남음</em></button>`;
     } else if (i < slots) {
-      cells += `<button class="sslot empty${target ? ' target' : ''}" data-store-empty="1" ${peek ? 'tabindex="-1"' : ''}>${target ? '여기로' : '비어 있음'}</button>`;
+      cells += `<button class="sslot empty${target && pendingAct === 'store' ? ' target' : ''}" data-store-empty="1" ${peek ? 'tabindex="-1"' : ''}>${target && pendingAct === 'store' ? '여기로' : '비어 있음'}</button>`;
     } else {
-      cells += `<div class="sslot locked"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><em>결산 보상 +1칸</em></div>`;
+      cells += `<div class="sslot locked"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><em>결산 보상<br>+1칸</em></div>`;
     }
   }
-  row.innerHTML = `<div class="sh"><b>창고</b><small>매출 · 손님 보너스에 안 들어가요</small></div><div class="slots">${cells}</div>`;
+  row.innerHTML = `<div class="sh"><b>${ICO.house}창고</b><small>매출 · 손님 보너스에 안 들어가요</small></div><div class="slots">${cells}</div>`;
   row.classList.toggle('peek', !!peek);
 }
 
 const tile = (act, icon, name, sub, { hot = false, off = false } = {}) =>
-  `<button class="atile${hot ? ' hot' : ''}${off ? ' off' : ''}" data-act="${act}" ${off ? 'aria-disabled="true"' : ''}><i>${icon}</i><b>${name}</b><small>${sub}</small></button>`;
+  `<button class="atile${hot ? ' hot' : ''}${off ? ' off' : ''}" data-act="${act}" ${off ? 'aria-disabled="true"' : ''}><i>${ICO[icon] ?? icon}</i><b>${name}</b><small>${sub}</small></button>`;
 
 // 합성 칸 문구: 가능하면 n/3, 아니면 모자란 개수나 이유
 function mergeTileSub(item, plan) {
@@ -338,30 +359,34 @@ function mergeTileSub(item, plan) {
   return ['재료 부족', true];
 }
 
-function sheetHead(item, line, sub = '', red = false) {
-  return `<div class="sheet-h"><span class="art"><img src="${itemImg(imgKey(item))}" alt=""></span>
-    <div><b>${displayName(item)} <span class="r">${roman(item.g ?? 1)}</span></b><small class="${red ? 'red' : ''}">${sub}</small><small>${line}</small></div></div>`;
+// 시트 머리: 그림 · 이름(또는 제목) · 한 줄 상태, 오른쪽에 하루 매출
+function sheetHead(item, line, { title = null, red = false, income = null, badge = '' } = {}) {
+  return `<span class="grab"></span><div class="sheet-h"><span class="art"><img src="${itemImg(imgKey(item))}" alt=""></span>
+    <div class="tx"><b>${title ?? `${displayName(item)} <span class="r">${roman(item.g ?? 1)}</span>`}</b><small class="${red ? 'red' : ''}">${line}</small></div>
+    ${income !== null ? `<div class="inc"><b>${income}</b><small>하루 매출</small></div>` : ''}${badge}</div>`;
 }
 
 // 진열대 상품 액션 시트(옮기기 · 창고 · 합성 · 올리기 · 팔기)
 function pieceSheetHTML(p, ev) {
   const r = ev.items.get(p.uid);
-  const bon = r.bonuses.filter((b) => b.amount > 0).map((b) => b.label);
-  let line = `하루 ${r.total}${bon.length ? ` · ${[...new Set(bon)].slice(0, 2).join(', ')} 효과` : ''}`;
-  if (isEgg(p)) { const gc = growthCheck(s.pieces, s.dim, G.sealedNow(s)).get(p.uid); line += ` · 성장 ${p.grow ?? 0}/${GROW_NEED} ${gc?.met ? '조건 충족' : '조건 아직'}`; }
+  const bon = [...new Set(r.bonuses.filter((b) => b.amount > 0).map((b) => b.label))];
+  const it = ITEMS[p.id];
+  let line = isEgg(p) ? `성장 ${p.grow ?? 0}/${GROW_NEED} · ${it.egg.grow.replace('으면 성장', '으면 성장').replace(' 성장', ' 성장')}`
+    : it.egg ? `성장 완료 · ${CATS[it.cat].name}` : bon.length ? `${bon.slice(0, 2).join(', ')} 효과 받는 중` : `${CATS[it.cat].name} · ${it.cells.length}칸`;
   const plan = G.mergePlan(s, p.uid);
   const [msub, moff] = mergeTileSub(p, plan);
   const sb = G.storeBlocked(s, p.uid);
   const up = G.upgradeCost(s, p), ub = G.upgradeBlocked(s, p);
   const upSub = ub ? ({ '알은 올릴 수 없어요': '알은 안 돼요', '등급 올리기는 하루 한 번이에요': '오늘 사용함' }[ub] ?? `${roman(G.UPGRADE_MAX)}부터 합성`) : s.balance < up ? `${up - s.balance} 부족` : up === 0 ? '이용권' : `잔금 ${up}`;
-  const tiles = tile('move-hint', '✥', '옮기기', '점 · ⇄ 누르기', { hot: true }) +
-    tile('store', '▣', '창고', sb ?? `${G.STORAGE_DAYS}일 보관`, { off: !!sb }) +
-    tile('merge-preview', '⚗', '합성', msub, { off: moff }) +
-    tile('upgrade', '⇧', '올리기', upSub, { off: !!ub || s.balance < up || !!s.pendingMutation }) +
-    tile('discard', '¤', '팔기', `+${G.sellValue(p)}`);
-  return `<div class="sheet">${sheetHead(p, line)}<div class="atiles">${tiles}</div>
-    <p class="sheet-note">창고에 넣으면 하루 매출 ${r.total}이 ${isEgg(p) ? '빠지고, 성장도 멈춰요' : '빠져요'}.</p>
-    <details class="more"><summary>펼치기 · 매출 내역과 효과</summary>${detailHTML(p, r, null, {})}</details></div>`;
+  const storeOn = pendingAct === 'store';
+  const tiles = tile('move-hint', 'move', '옮기기', '점 누르기', { hot: !storeOn }) +
+    tile('store', 'store', '창고', sb ?? `${G.STORAGE_DAYS}일 보관`, { off: !!sb, hot: storeOn }) +
+    tile('merge-preview', 'merge', '합성', msub, { off: moff }) +
+    tile('upgrade', 'up', '올리기', upSub, { off: !!ub || s.balance < up || !!s.pendingMutation }) +
+    tile('discard', 'sell', '팔기', `잔금 +${G.sellValue(p)}`);
+  const foot = storeOn ? `<p class="sheet-note">창고에 넣으면 하루 매출 ${r.total}이 ${isEgg(p) ? '빠지고, 성장도 멈춰요' : '빠져요'}.</p>`
+    : `<details class="more"><summary><span>매출 내역 <b>기본 ${r.base}</b> · 효과 · 변이 안내</span><span class="tog">펼치기</span></summary>${detailHTML(p, r, null, {})}</details>`;
+  return `<div class="sheet">${sheetHead(p, line, { income: r.total })}<div class="atiles">${tiles}</div>${foot}</div>`;
 }
 
 // 창고 상품 시트(꺼내기 · 합성 · 팔기)
@@ -371,10 +396,12 @@ function storedSheetHTML(p) {
   const ub = G.unstoreBlocked(s, p.uid);
   const plan = G.mergePlan(s, { stored: p.uid });
   const [msub, moff] = mergeTileSub(p, plan);
-  const tiles = tile('unstore-hint', '⤒', '꺼내기', ub ?? '점 누르기', { hot: !ub, off: !!ub }) +
-    tile('merge-preview', '⚗', '합성', msub, { off: moff }) +
-    tile('sell-stored', '¤', '팔기', `+${G.sellValue(p)}`);
-  return `<div class="sheet">${sheetHead(p, isEgg(p) ? `성장 ${p.grow ?? 0}/${GROW_NEED}에서 멈춤` : `등급 ${roman(p.g)} · 변이 유지`, sub, last)}<div class="atiles three">${tiles}</div></div>`;
+  const tiles = tile('unstore-hint', 'out', '꺼내기', ub ?? '점 누르기', { hot: !ub, off: !!ub }) +
+    tile('merge-preview', 'merge', '합성', msub.replace(`${displayName(p)} `, '같은 상품 '), { off: moff }) +
+    tile('sell-stored', 'sell', '팔기', `+${G.sellValue(p)}`);
+  const best = bestStoredSpot(p);
+  const note = best?.why ? `초록 점선 자리는 ${wa(best.why)} 붙어서 영업 후 성장해요.` : best ? '초록 점선 자리에 꺼내면 이 상품 하루 매출이 가장 높아요.' : '진열대의 점을 누르면 꺼낼 자리를 미리 볼 수 있어요.';
+  return `<div class="sheet">${sheetHead(p, sub, { title: `창고 · ${displayName(p)} <span class="r">${roman(p.g)}</span>`, red: last })}<div class="atiles three">${tiles}</div><p class="sheet-note">${note}</p></div>`;
 }
 
 // 옮기기·꺼내기·놓기 미리보기: 바뀌는 것 3줄
@@ -382,34 +409,78 @@ function movePreviewHTML(ev, prevEv) {
   const g = ghostPiece();
   const valid = ghostValid();
   const item = selectedItem();
-  if (!valid) return `<div class="sheet">${sheetHead(item, '다른 상품이나 봉인된 칸과 겹쳐서 놓을 수 없어요')}</div>`;
-  const before = ev.sum.total, after = prevEv.sum.total;
+  if (!valid) return `<div class="sheet">${sheetHead(item, '다른 상품이나 봉인된 칸과 겹쳐서 놓을 수 없어요', { title: `${displayName(item)}는 여기에 못 놓아요` })}</div>`;
   const mine = prevEv.items.get(g.uid);
   const was = sel.kind === 'piece' ? ev.items.get(sel.uid) : null;
   const names = (r) => new Set((r?.bonuses ?? []).filter((b) => b.amount > 0).map((b) => b.label));
   const a = names(was), b = names(mine);
   const gained = [...b].filter((x) => !a.has(x)), lost = [...a].filter((x) => !b.has(x));
-  let cond = `이 상품 하루 ${was ? `${was.total} → ` : ''}${mine.total}`;
+  const delta = (x, y) => (y - x === 0 ? '<b>(변화 없음)</b>' : `<b class="${y > x ? 'okc' : 'noc'}">(${y > x ? '+' : ''}${y - x})</b>`);
+  const rows = [];
   if (isEgg(g)) {
+    const now = sel.kind === 'piece' ? growthCheck(s.pieces, s.dim, G.sealedNow(s)).get(sel.uid) : null;
     const gc = growthCheck(previewPieces(), s.dim, G.sealedNow(s)).get(g.uid);
-    cond += gc?.met ? ` · 성장 조건 충족(${gc.why})${gc.nest ? ' + 둥지' : ''}` : ' · 성장 조건 아직';
+    const need = ITEMS[g.id].egg.grow.replace(/(과|와) 붙으면 성장$/, '').replace(/이 있으면 성장$/, '').split(/나 |·/)[0];
+    const nearOf = (r) => (r.why === '옆 빈칸' ? '옆 빈칸 있음' : `${wa(r.why)} 붙음`);
+    const farOf = g.id === 'slime' ? '옆 빈칸 없음' : `${wa(need)} 떨어짐`;
+    const left = now ? (now.met ? nearOf(now) : farOf) : sel.kind === 'stored' ? '창고(성장 멈춤)' : '—';
+    const right = gc?.met ? `<b class="okc">${nearOf(gc)} · 영업 후 성장 ${gc.from}→${gc.to}</b>` : `<b class="noc">${farOf} · 성장 안 함</b>`;
+    rows.push(['성장 조건', `${left} → ${right}`]);
   }
-  const fx = gained.length || lost.length ? [gained.length ? `얻음: ${gained.join(', ')}` : '', lost.length ? `잃음: ${lost.join(', ')}` : ''].filter(Boolean).join(' · ') : '주변 효과 변화 없음';
+  rows.push(['하루 매출', `${was ? was.total : sel.kind === 'stored' ? 0 : '—'} → <b>${mine.total}</b> ${delta(was ? was.total : 0, mine.total)}`]);
+  const fx = gained.length || lost.length ? [gained.length ? `<b class="okc">얻음: ${gained.join(', ')}</b>` : '', lost.length ? `<b class="noc">잃음: ${lost.join(', ')}</b>` : ''].filter(Boolean).join(' · ') : '<b>잃는 효과 없음</b>';
+  rows.push(['주변 효과', `${a.size ? [...a].join(', ') : '—'} → ${fx}`]);
   const sw = swapTarget();
-  const title = sw ? `⇄ ${displayName(sw)}와(과) 자리 바꾸기` : sel.kind === 'stored' ? '창고에서 꺼내기' : sel.kind === 'hand' ? '여기에 놓기' : '여기로 옮기기';
-  return `<div class="sheet preview"><div class="pv-h">${title}</div><dl>
-    <dt>하루 매출</dt><dd>${before} → <b>${after}</b> <span class="${after - before >= 0 ? 'okc' : 'noc'}">(${after - before >= 0 ? '+' : ''}${after - before})</span></dd>
-    <dt>조건</dt><dd>${cond}</dd><dt>주변 효과</dt><dd>${fx}</dd></dl></div>`;
+  const title = sw ? `${displayName(item)} ⇄ ${displayName(sw)}` : sel.kind === 'stored' ? `${displayName(item)}를 창고에서 꺼내기` : `${displayName(item)}를 여기로`;
+  const sub = sw ? '자리를 바꾸기 전에 바뀌는 것을 확인해요' : sel.kind === 'hand' ? '놓기 전에 바뀌는 것을 확인해요' : '옮기기 전에 바뀌는 것을 확인해요';
+  return `<div class="sheet preview">${sheetHead(item, sub, { title })}<dl class="pv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
 }
 
 // 놓을 자리가 없을 때: 창고 · 정리 · 넘기기
 function noRoomHTML() {
   const free = G.storageFree(s);
-  return `<div class="sheet"><div class="pv-h">놓을 자리가 없어요</div><div class="atiles three">` +
-    tile('store-hand', '▣', '창고에 넣기', free > 0 ? `빈 칸 ${free}개 · ${G.STORAGE_DAYS}일 보관 · 그동안 매출 0` : '창고 가득 참', { hot: free > 0, off: free <= 0 }) +
-    tile('tidy', '✥', '진열대 정리하기', '옮기기·합성·팔기로 자리 만들기') +
-    tile('skip-hand', '→', '넘기기', s.ordering ? '발주 상품을 버려요' : `받지 않고 잔금 +${G.skipBonus(s)}`) +
+  const h = { ...s.hand, uid: -1 };
+  const n = ITEMS[h.id].cells.length;
+  const empty = s.dim.cols * s.dim.rows - s.pieces.reduce((a, q) => a + ITEMS[q.id].cells.length, 0);
+  const why = empty >= n ? `${n}칸 · 빈칸 ${empty}개가 모두 떨어져 있어요` : `${n}칸 · 빈칸이 ${empty}개뿐이에요`;
+  const row = (act, icon, b, small, { hot = false, off = false } = {}) =>
+    `<button class="optrow${hot ? ' hot' : ''}${off ? ' off' : ''}" data-act="${act}" ${off ? 'aria-disabled="true"' : ''}><i>${ICO[icon]}</i><span><b>${b}</b><small>${small}</small></span></button>`;
+  return `<div class="sheet">${sheetHead(h, why, { title: `${displayName(h)} <span class="r">${roman(h.g)}</span> · 놓을 자리가 없어요` })}<div class="optrows">` +
+    row('store-hand', 'store', '창고에 넣기', free > 0 ? `빈 칸 ${free}개 · ${G.STORAGE_DAYS}일 보관 · 그동안 매출 0` : '창고 가득 참', { hot: free > 0, off: free <= 0 }) +
+    row('tidy', 'move', '진열대 정리하기', `옮기거나 팔아서 ${n}칸 자리 만들기`) +
+    row('skip-hand', 'skip', '넘기기', s.ordering ? '발주 상품을 버려요' : `받지 않고 잔금 +${G.skipBonus(s)}`) +
     '</div></div>';
+}
+
+// 창고 상품을 꺼내기 좋은 자리(초록 점선과 같은 기준)와 그 이유
+function bestStoredSpot(p) {
+  const sealed = G.sealedNow(s);
+  let best = null;
+  for (let rot = 0; rot < 4; rot++)
+    for (let y = 0; y < s.dim.rows; y++)
+      for (let x = 0; x < s.dim.cols; x++) {
+        const g = { ...p, uid: -7, x, y, rot };
+        if (!canPlace(s.dim, s.pieces, g, undefined, sealed)) continue;
+        const pcs = [...s.pieces, g];
+        if (isEgg(g)) {
+          const r = growthCheck(pcs, s.dim, sealed).get(-7);
+          if (r?.met && (!best || !best.why)) best = { x, y, rot, why: r.why, v: 0 };
+        } else {
+          const v = G.income(s, pcs).items.get(-7).total;
+          if (!best || v > best.v) best = { x, y, rot, v };
+        }
+      }
+  return best;
+}
+
+// 입고 중 정리의 기본 화면(시안 25): 안내 한 줄과 합성 가능·성장 대기 알·빈칸
+function tidyIdleHTML() {
+  const mergeable = s.pieces.filter((p) => G.mergePlan(s, p.uid) && !G.mergePlan(s, p.uid).blocked);
+  const kinds = new Set(mergeable.map((p) => `${p.id}/${p.g}`)).size;
+  const eggs = s.pieces.filter((p) => isEgg(p)).length;
+  const empty = s.dim.cols * s.dim.rows - s.pieces.reduce((a, q) => a + ITEMS[q.id].cells.length, 0);
+  return `<div class="idle-note"><i>${ICO.hand}</i><span>상품을 눌러 <b>옮기기 · 창고 · 합성 · 올리기 · 팔기</b>를 해요. 남은 입고 ${s.picksLeft}번은 그대로예요.</span></div>
+    <div class="idle-stats"><div><b>${kinds}</b><small>합성 가능</small></div><div><b class="pink">${eggs}</b><small>성장 대기 알</small></div><div><b>${empty}</b><small>빈칸</small></div></div>`;
 }
 
 /* ---------- 진열대 그리기 ---------- */
@@ -572,6 +643,7 @@ function setGhostAt(cx, cy, rot, grab) {
 
 function select(next) {
   sel = next;
+  pendingAct = null;
   ghost = null;
   merging = null;
   if (next?.kind === 'hand') handRot = s.hand.rot ?? 0;
@@ -637,7 +709,7 @@ function render() {
   const coach = coachStep();
 
   $('p-day').textContent = `${s.day}일 차`;
-  $('p-sub').textContent = s.phase === 'pick' ? (tidying ? '정리 중' : `입고 ${s.picksDone + 1}/${s.picksDone + s.picksLeft}`) : '상점 정리';
+  $('p-sub').textContent = s.phase === 'pick' ? `입고 ${s.picksDone + 1}/${s.picksDone + s.picksLeft}${tidying ? ' · 정리 중' : ''}` : '정리 중';
   $('p-status').innerHTML = statusHTML();
   $('btn-coach-skip').hidden = !coach;
   $('btn-menu').hidden = !!coach;
@@ -708,12 +780,13 @@ function render() {
     else if (match) tag = '<span class="ptag up">같은 상품</span>';
     const bonus = r.bonuses.some((b) => b.amount > 0);
     const canSw = selP && !picking && p.uid !== selP.uid && G.canSwap(s, selP.uid, p.uid);
-    const sub = `<span class="per">${bonus ? '<b>✦</b> ' : ''}하루 ${(prevEv?.items.get(p.uid) ?? r).total}</span>${canSw ? '<span class="swapb" aria-label="자리 바꾸기 가능">⇄</span>' : ''}`;
+    const sub = canSw ? '<span class="swapb" aria-label="자리 바꾸기 가능">⇄</span>' : '';
     html += pieceHTML(vdim, piece, { cls: cls.join(' '), sub, tag });
   }
   if (g) {
     const valid = ghostValid();
-    const tag = !valid ? '<span class="ptag bad">✕ 놓을 수 없음</span>' : swapTarget() ? `<span class="ptag swap">⇄ 자리 바꾸기 · +${prevEv.items.get(g.uid).total}</span>` : `<span class="ptag">+${prevEv.items.get(g.uid).total}</span>`;
+    const grownOk = valid && isEgg(g) && growthCheck(prev, s.dim, G.sealedNow(s)).get(g.uid)?.met;
+    const tag = !valid ? '<span class="ptag bad">✕ 놓을 수 없음</span>' : grownOk ? '<span class="ptag grow">성장 조건 ✓</span>' : swapTarget() ? '<span class="ptag swap">⇄ 자리 바꾸기</span>' : '';
     html += pieceHTML(vdim, g, { cls: `ghost ${valid ? 'valid' : 'invalid'}`, tag });
   }
   // 합성 결과가 빈자리에 생기는 경우(재료가 모두 창고)
@@ -747,8 +820,8 @@ function renderStrip() {
   const today = G.customerOn(s, s.day), tomorrow = G.customerOn(s, s.day + 1);
   const active = G.activeContracts(s);
   const soon = active.map((c) => G.contractDaysLeft(s, c)).sort((a, b) => a - b)[0];
-  const lead = s.main ? `주력 <b>${SHORT[s.main]}</b>` : G.startSupport(s) ? `시작 분야 <b>${CATS[s.startCat].name}</b>` : '단골 <b>없음</b>';
-  $('strip-sum').innerHTML = `<span class="ic">${lead}</span><span class="ic">손님 <b>${SHORT[today]}</b> → <b>${SHORT[tomorrow]}</b></span><span class="ic">계약 <b>${active.length}/2</b>${soon ? ` <span class="due">D-${soon - 1}</span>` : ''}</span>` +
+  const lead = s.main ? `<img class="chip-face" src="${guestImg(s.main)}" alt="">주력 ${SHORT[s.main]}` : G.startSupport(s) ? `${catIcon(s.startCat, 'chip-ic')}시작 분야 ${CATS[s.startCat].name.split('·')[0]}` : '단골 없음';
+  $('strip-sum').innerHTML = `<span class="ic">${lead}</span><span class="ic">손님 ${SHORT[today]} → ${SHORT[tomorrow]}</span><span class="ic">계약 ${active.length}/2${soon ? ` <span class="due">D-${soon - 1}</span>` : ''}</span>` +
     (s.contractOffer ? '<span class="ic due">제안 도착</span>' : '') + ((s.storage?.length ?? 0) ? `<span class="ic">창고 <b>${s.storage.length}/${s.storageSlots}</b></span>` : '');
   const head = $('strip-head');
   head.setAttribute('aria-expanded', String(stripOpen));
@@ -813,19 +886,18 @@ function renderOffers(coach) {
     const egg = !!it.egg;
     const name = egg ? it.egg.name : it.name;
     const desc = egg ? `성장 전 · ${it.egg.grow}` : effectText(o.id, s.offerGrade);
-    return `<div class="oslot"><span class="otag t${o.why}">${whyText(o, i)}</span>
-      <button class="orow${pickedOffer === i ? ' sel' : ''}${coach === 1 && i === 0 && pickedOffer === null ? ' hl' : ''}" data-offer="${i}">
+    return `<button class="orow v2${pickedOffer === i ? ' sel' : ''}${coach === 1 && i === 0 && pickedOffer === null ? ' hl' : ''}" data-offer="${i}">
       <span class="art"><img src="${itemImg(egg ? `${o.id}_egg` : o.id)}" alt=""></span>
       <span class="body"><span class="nm">${name}<span class="r">${roman(s.offerGrade)}</span><span class="cat" style="background:${CATS[it.cat].color}">${catIcon(it.cat, 'mini-ic')}${CATS[it.cat].name}</span></span>
-      <span class="eff">${it.cells.length}칸 · 기본 ${egg ? it.egg.base : gradeBase(o.id, s.offerGrade)} · ${desc}</span></span></button></div>`;
+      <span class="why t${o.why}">${whyText(o, i)}</span>
+      <span class="eff">${it.cells.length}칸 · ${egg ? it.egg.grow : desc}</span></span></button>`;
   }).join('');
   const cost = G.rerollCost(s);
   const one = s.freeTickets > 0 && G.slot1Cat(s) && !s.offerCat
-    ? `<button class="btn rr one" data-act="reroll-one">1번만 다시 뽑기<small>무료 이용권 ${s.freeTickets} / ${G.MAX_TICKETS}</small></button>` : '';
-  const all = `<button class="btn rr" data-act="reroll-all" ${s.balance < cost ? 'disabled' : ''}>전체 새로고침<small>${cost === 0 ? (s.grace ? '마왕의 유예 · 무료' : '무료') : `잔금 ${cost}`} · 자리 역할 유지</small></button>`;
-  $('panel').innerHTML = (coach ? coachHTML(coach, 'down') : '') + banner +
-    `<div class="offer-list">${rows}</div>${rewardPick ? '' : `<div class="rr-row${one ? '' : ' single'}">${one}${all}</div>`}` +
-    (one ? '<p class="fine center">다시 뽑아도 같은 상품이 나올 수 있어요</p>' : '');
+    ? `<button class="rr-link" data-act="reroll-one">1번만 다시 뽑기 · 무료 이용권 ${s.freeTickets}/${G.MAX_TICKETS}</button>` : '';
+  const all = `<button class="rr-link" data-act="reroll-all" ${s.balance < cost ? 'disabled' : ''}>전체 새로고침 · ${cost === 0 ? (s.grace ? '마왕의 유예로 무료' : '무료') : `잔금 ${cost}`}</button>`;
+  $('panel').innerHTML = (coach ? coachHTML(coach, 'down') : '') + (rewardPick ? banner : '') +
+    `<div class="offer-list">${rows}</div>${rewardPick ? '' : `<div class="rr-links">${all}${one}</div>`}`;
 }
 
 function eggDetailHTML(item, acts) {
@@ -893,21 +965,25 @@ function mergePanelHTML() {
   const m = merging;
   const id = m.target.id;
   const name = ITEMS[id].name;
-  const today = G.customerOn(s, s.day), tomorrow = G.customerOn(s, s.day + 1);
   const ms = mergedState();
-  const before = G.income(s).sum.total, after = ms ? ms.ev.sum.total : before;
+  const ev0 = G.income(s);
+  const before = m.set.reduce((a, q) => a + (ev0.items.get(q.uid)?.total ?? 0), 0);
+  const resUid = m.anchor?.uid ?? (m.target.uid === -1 ? null : m.anchor?.spot ? null : m.target.uid);
+  const resPiece = ms && (resUid != null ? ms.state.pieces.find((p) => p.uid === resUid) : ms.state.pieces.find((p) => p.id === id && p.g === m.g && !s.pieces.some((q) => q.uid === p.uid && q.g === p.g)));
+  const after = resPiece ? ms.ev.items.get(resPiece.uid).total : gradeBase(id, m.g);
   const empty = (st) => st.dim.cols * st.dim.rows - st.pieces.reduce((a, q) => a + ITEMS[q.id].cells.length, 0);
   const fromStore = m.set.filter((q) => q.inStore).length;
+  const d = (x, y) => `<b class="${y >= x ? 'okc' : 'noc'}">${y} (${y - x >= 0 ? '+' : ''}${y - x})</b>`;
   const rows = [
-    ['하루 매출', `${before} → <b>${after}</b> <span class="minus">(${after - before >= 0 ? '+' : ''}${after - before})</span>`],
-    ['빈 칸', ms ? `${empty(s)} → ${empty(ms.state)}${fromStore ? ` · 창고 ${fromStore}칸 비움` : ''}` : '-'],
+    ['하루 매출', `${before} → ${d(before, after)}`],
+    ['빈칸', ms ? `${empty(s)} → ${d(empty(s), empty(ms.state))}${fromStore ? ` · 창고 ${fromStore}칸 비움` : ''}` : '-'],
   ];
-  if (m.g === 2 && !s.mutations[id]) rows.push(['변이', '처음 Ⅱ등급 · 변이를 골라요']);
-  if (today === 'goblins') rows.push(['오늘 고블린 행상단', '같은 상품 보너스가 줄어요']);
-  if (tomorrow === 'noble' || today === 'noble') rows.push([`${today === 'noble' ? '오늘' : '내일'} 귀족 수집가`, '높은 등급 보너스 대상']);
-  const where = m.target.uid === -1 ? '손에 든 새 상품이 한 등급 올라요.' : '흐리게 표시된 칸은 합성 후 비어요.';
-  return `<div class="parch-panel"><h4>${name} <span class="r">${roman(m.target.g)}</span> × 3 → <span class="r">${roman(m.g)}</span> <em class="cnt">3 / 3</em></h4>` +
-    `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl><p>${where} 영업 전까지 되돌릴 수 있어요.</p></div>`;
+  rows.push(['다음 단계', m.g === 2 && !s.mutations[id] ? '— → <b>처음 Ⅱ등급 · 변이 선택이 이어져요</b>' : '— → <b>바로 진열대에 반영</b>']);
+  const it0 = { ...m.target, uid: -1 };
+  const boardMats = m.set.filter((q) => !q.inStore && q.uid !== -1 && q.uid !== resUid).length;
+  const where = m.target.uid === -1 ? '손에 든 새 상품이 한 등급 올라요' : fromStore === 3 ? '창고 재료로 만든 결과는 진열대 빈자리에 놓여요' : boardMats ? `흐린 ${boardMats}칸은 합성 후 비어요` : '창고 재료를 써서 진열대 칸은 그대로예요';
+  return `<div class="sheet preview">${sheetHead(it0, where, { title: `${name} <span class="r">${roman(m.target.g)}</span> × 3 → <span class="r">${roman(m.g)}</span>`, badge: '<em class="cnt">3 / 3</em>' })}` +
+    `<dl class="pv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
 }
 
 function renderPanel(ev, prevEv, coach) {
@@ -919,7 +995,7 @@ function renderPanel(ev, prevEv, coach) {
   if (sel?.kind === 'stored' && selectedStored()) { panel.innerHTML = storedSheetHTML(selectedStored()); return; }
 
   if (s.phase === 'pick') {
-    panel.innerHTML = '<p class="tidy-line">상품이나 창고 칸을 누르면 할 수 있는 일이 나와요. 남은 입고 횟수는 그대로예요.</p>';
+    panel.innerHTML = tidyIdleHTML() + (s.storage?.length ? `<p class="tidy-line">창고에 둔 상품은 자라지 않고 매출에도 안 들어가요. 자리가 나면 꺼내서 놓으세요.</p>` : '');
     return;
   }
   if (s.phase === 'place' && s.hand) {
@@ -1000,6 +1076,26 @@ function renderActions(coach) {
   // 미리보기 중이면 [취소], 상품을 고른 채면 [선택 해제]
   if (sel && (ghost || sel.kind !== 'hand')) { cancel.hidden = false; cancel.textContent = ghost ? '취소' : '선택 해제'; }
   $('btn-undo').disabled = !G.canUndo(s);
+  if (pendingAct === 'store' && sel?.kind === 'piece' && !ghost) {
+    $('btn-rotate').hidden = true; $('btn-skip').hidden = true; $('btn-undo').hidden = true;
+    main.textContent = '창고에 넣기';
+    main.disabled = !!G.storeBlocked(s, sel.uid);
+    return;
+  }
+  if (sel?.kind === 'stored' && !ghost) {
+    $('btn-rotate').hidden = true; $('btn-skip').hidden = true; $('btn-undo').hidden = true;
+    const b = bestStoredSpot(selectedStored());
+    const near = b?.why ? `${b.why} 옆에 놓기` : '좋은 자리에 꺼내기';
+    main.textContent = b ? near : '꺼낼 자리 없음';
+    main.disabled = !b;
+    return;
+  }
+  if (s.phase === 'place' && sel?.kind === 'hand' && !ghost && !anyFit(s.dim, s.pieces, s.hand.id, G.sealedNow(s)) && !G.mergePlan(s, 'hand')) {
+    $('btn-rotate').hidden = true; $('btn-skip').hidden = true;
+    main.textContent = G.storageFree(s) > 0 ? '창고에 넣기' : '넘기기';
+    main.disabled = false;
+    return;
+  }
   if (s.phase === 'pick' && tidying && !ghost) {
     $('btn-rotate').hidden = !sel;
     $('btn-rotate').disabled = !sel;
@@ -1634,8 +1730,9 @@ function bind() {
     if (a === 'store' && sel?.kind === 'piece') {
       const why = G.storeBlocked(s, sel.uid);
       if (why) { toast(why); return; }
-      const name = displayName(selectedPiece());
-      if (act((x) => G.store(x, sel.uid), 'item_pick')) toast(`${name}을(를) 창고에 넣었어요 · ${G.STORAGE_DAYS}일 보관`);
+      pendingAct = pendingAct === 'store' ? null : 'store';
+      S.play('ui_tap');
+      render();
     }
     if (a === 'store-hand') {
       const why = G.storeBlocked(s, 'hand');
@@ -1819,6 +1916,22 @@ function bind() {
       select({ kind: 'hand' });
       save();
       return render();
+    }
+    if (pendingAct === 'store' && sel?.kind === 'piece' && !ghost) {
+      const uid = sel.uid, name = displayName(selectedPiece());
+      pendingAct = null;
+      if (act((x) => G.store(x, uid), 'item_pick')) toast(`${name}을(를) 창고에 넣었어요 · ${G.STORAGE_DAYS}일 보관`);
+      return;
+    }
+    if (sel?.kind === 'stored' && !ghost) {
+      const b = bestStoredSpot(selectedStored());
+      if (b) { ghost = { x: b.x, y: b.y, rot: b.rot }; render(); }
+      return;
+    }
+    if (s.phase === 'place' && sel?.kind === 'hand' && !ghost && !anyFit(s.dim, s.pieces, s.hand.id, G.sealedNow(s)) && !G.mergePlan(s, 'hand')) {
+      if (G.storageFree(s) > 0) { if (act((x) => G.store(x, 'hand'), 'item_pick')) toast('창고에 넣었어요'); }
+      else $('btn-skip').click();
+      return;
     }
     if (s.phase === 'pick' && tidying && !ghost && !merging) { tidying = false; select(null); return render(); }
     if (merging) confirmMerge();
