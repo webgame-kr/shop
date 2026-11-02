@@ -1,7 +1,7 @@
 // 한 판의 진행: 영업 예고 → 입고(3개 중 1개, 하루 2번) → 정리·합성·변이·계약 → 영업 → 납부 판정
 // → 결산 보상 → 단골 제안. 상태는 JSON 하나로 저장되고, 무작위는 시드와 난수 상태를 함께 저장한다.
 import {
-  ITEMS, ITEM_IDS, CUSTOMERS, CUSTOMER_IDS, CATS, CAT_IDS, CAT_GUEST, START_SIZE, EXPAND_STEPS, MAX_LIVES, GROW_NEED,
+  ITEMS, ITEM_IDS, CUSTOMERS, CUSTOMER_IDS, CATS, CAT_IDS, CAT_GUEST, START_SIZE, EXPAND_STEPS, EXPAND_SCHEDULE, MAX_SIZE, dimForDay, MAX_LIVES, GROW_NEED,
   canPlace, anyFit, findSpot, evaluate, mergeSet, cellsOf, isEgg, displayName, growthCheck, neighborsOf, gradeBase,
 } from './rules.js';
 
@@ -344,7 +344,7 @@ export function income(s, pieces = s.pieces) {
 
 export function newGame(seed = (Math.random() * 2 ** 32) >>> 0, startCat = 'alch') {
   const s = {
-    v: 4, seed, rng: seed | 0, startCat,
+    v: 5, seed, rng: seed | 0, startCat,
     day: 1, lives: MAX_LIVES, phase: 'pick',
     dim: { ...START_SIZE }, expand: 0,
     pieces: [], nextUid: 1,
@@ -354,7 +354,7 @@ export function newGame(seed = (Math.random() * 2 ** 32) >>> 0, startCat = 'alch
     perma: Object.fromEntries(CAT_IDS.map((c) => [c, 0])), catBoost: {},
     mutations: {}, pendingMutation: null,
     favor: {}, regulars: [], regularOffer: null, main: null, everMain: false,
-    priority: null, tickets: 0, freeTickets: 0, mergeCount: 0, bonusPick: null, recentCats: [], recentContracts: [], doneContracts: [], upTickets: 0, upgrades: 0,
+    priority: null, tickets: 0, freeTickets: 0, mergeCount: 0, bonusPick: null, recentCats: [], recentContracts: [], doneContracts: [], upTickets: 0, upgrades: 0, orderTickets: 0, ordersToday: 0, ordering: false, orders: 0, lastExpand: null, rewardCash: 0,
     grace: false, rerolls: 0, extras: 0, bonusGradeNext: false, forfeitReward: false,
     rewardOffer: null, undo: [], last: null, final: null, briefSeen: false,
   };
@@ -363,6 +363,9 @@ export function newGame(seed = (Math.random() * 2 ** 32) >>> 0, startCat = 'alch
 }
 
 function startDay(s) {
+  applyExpansion(s);
+  s.ordersToday = 0;
+  s.ordering = false;
   s.picksLeft = PICKS_PER_DAY;
   s.picksDone = 0;
   s.rerolls = 0;
@@ -381,6 +384,44 @@ function startDay(s) {
 }
 
 export function seeBrief(s) { s.briefSeen = true; }
+
+// 이전 형식(v4) 진행 중 판: 새 필드를 채우고, 진열대는 줄이지 않고 일정 크기와 비교해 큰 쪽(가로·세로 각각)을 쓴다
+export function migrate(s) {
+  if (!s || s.v === 5) return s;
+  if (s.v !== 4) return null;
+  Object.assign(s, { v: 5, orderTickets: 0, ordersToday: 0, ordering: false, orders: 0, lastExpand: null, rewardCash: 0 });
+  s.recentContracts ??= []; s.doneContracts ??= []; s.upTickets ??= 0; s.upgrades ??= 0;
+  for (const c of CAT_IDS) s.perma[c] ??= 0;
+  const want = dimForDay(s.day);
+  s.dim = { cols: Math.max(s.dim.cols, want.cols), rows: Math.max(s.dim.rows, want.rows) };
+  if (s.rewardOffer) s.rewardOffer = s.rewardOffer.map((k) => (k === 'expand' ? 'order' : k));
+  return s;
+}
+
+/* ---------- 진열대 자동 확장 ---------- */
+
+// 다음에 넓어질 날과 크기(최대면 null)
+export function nextExpansion(s) {
+  return EXPAND_SCHEDULE.find((e) => e.day > s.day && (e.cols > s.dim.cols || e.rows > s.dim.rows)) ?? null;
+}
+
+// 크기를 바꾸면 매출이 어떻게 달라지는지: 새 칸 수, 조건이 달라지는 상품, 전체 변화
+export function expansionPreview(s, from, to) {
+  const ctx = (dim) => ({ ...ctxFor(s), dim });
+  const a = evaluate(s.pieces, ctx(from)), b = evaluate(s.pieces, ctx(to));
+  const changed = s.pieces.map((p) => ({ uid: p.uid, id: p.id, from: a.items.get(p.uid).total, to: b.items.get(p.uid).total })).filter((c) => c.from !== c.to);
+  return { added: to.cols * to.rows - from.cols * from.rows, changed, delta: b.sum.total - a.sum.total };
+}
+
+function applyExpansion(s) {
+  const want = dimForDay(s.day);
+  if (want.cols <= s.dim.cols && want.rows <= s.dim.rows) { s.lastExpand = null; return; }
+  const from = { ...s.dim };
+  const to = { cols: Math.max(from.cols, want.cols), rows: Math.max(from.rows, want.rows) };
+  s.lastExpand = { day: s.day, from, to, ...expansionPreview(s, from, to) };
+  s.dim = to; // 왼쪽 위 좌표는 그대로, 오른쪽·아래에 칸이 붙는다
+  s.expand = EXPAND_SCHEDULE.filter((e) => e.day <= s.day).length;
+}
 
 // 즉시·기간·조건에서 하나씩. 같은 유형에서 서로 모순되는 계약(붉은 간판/보랏빛 연기)은 함께 나오지 않는다.
 export function drawContracts(s) {
@@ -553,6 +594,8 @@ export function undo(s) {
 /* ---------- 입고와 배치 ---------- */
 
 function afterPick(s) {
+  // 발주 상품은 기본 입고 횟수를 바꾸지 않고 정리 단계로 돌아간다
+  if (s.ordering) { s.ordering = false; s.hand = null; s.offers = null; s.phase = 'arrange'; return; }
   s.hand = null;
   s.picksDone++;
   s.picksLeft--;
@@ -583,7 +626,7 @@ export function skipBonus(s) { return 2 + Math.floor(s.day / 4); }
 export function skip(s) {
   if (s.phase !== 'pick' && s.phase !== 'place') return false;
   snapshot(s);
-  s.balance += skipBonus(s);
+  if (!s.ordering) s.balance += skipBonus(s); // 발주 상품을 버리는 건 보너스 없음
   afterPick(s);
   return true;
 }
@@ -742,23 +785,9 @@ export function buyExtra(s) {
 }
 
 
-export function expandCost(s) { return s.expand < EXPAND_STEPS.length ? 60 + 40 * s.expand : null; }
-
-function grow(s) {
-  if (s.expand >= EXPAND_STEPS.length) return false;
-  s.dim = { ...EXPAND_STEPS[s.expand] };
-  s.expand++;
-  return true;
-}
-
-export function buyExpand(s) {
-  const cost = expandCost(s);
-  if (!prep(s) || cost === null || s.balance < cost) return false;
-  snapshot(s);
-  s.balance -= cost;
-  grow(s);
-  return true;
-}
+// 진열대는 자동으로 넓어진다(결산일 다음 날). 잔금으로 사는 확장은 없다.
+export function expandCost() { return null; }
+export function buyExpand() { return false; }
 
 function addPicks(s, n, grade = 1, cat = null) {
   s.picksLeft += n;
@@ -768,6 +797,52 @@ function addPicks(s, n, grade = 1, cat = null) {
     s.offers = drawOffers(s);
     s.phase = 'pick';
   }
+}
+
+/* ---------- 지정 발주 ---------- */
+
+// 진열 중인 상품 종류를 하루 두 번까지 확정 입고. 첫 주문 25 + 10·⌊날짜÷5⌋, 두 번째는 두 배. 발주권이면 무료.
+export const ORDERS_PER_DAY = 2;
+export const MAX_ORDER_TICKETS = 2;
+export function orderBaseCost(s) { return 25 + 10 * Math.floor(s.day / 5); }
+export function orderCost(s) {
+  if ((s.orderTickets ?? 0) > 0) return 0;
+  return orderBaseCost(s) * ((s.ordersToday ?? 0) >= 1 ? 2 : 1);
+}
+export function orderables(s) {
+  return [...new Set(s.pieces.map((p) => p.id))];
+}
+// 주문할 수 없으면 이유, 할 수 있으면 null
+export function orderBlocked(s, id) {
+  if (s.phase !== 'arrange') return '기본 입고를 마친 뒤 상점 정리 단계에서 주문할 수 있어요';
+  if (s.hand) return '손에 든 상품을 먼저 처리해 주세요';
+  if (s.pendingMutation) return '변이를 먼저 골라 주세요';
+  if (s.regularOffer) return '단골 제안을 먼저 처리해 주세요';
+  if (extraBlocked(s)) return '계약 때문에 오늘은 추가 입고·발주를 할 수 없어요';
+  if ((s.ordersToday ?? 0) >= ORDERS_PER_DAY) return `지정 발주는 하루 ${ORDERS_PER_DAY}번까지예요`;
+  if (id && !s.pieces.some((p) => p.id === id)) return '진열 중인 상품 종류만 주문할 수 있어요';
+  if (id) {
+    const room = anyFit(s.dim, s.pieces, id, sealedNow(s));
+    const mergeable = !ITEMS[id].egg && s.pieces.filter((p) => p.id === id && p.g === 1 && !isEgg(p)).length >= 2;
+    if (!room && !mergeable) return '현재는 받을 공간이 없어요. 상품을 합성하거나 정리한 뒤 주문하세요';
+  }
+  const cost = orderCost(s);
+  if (s.balance < cost) return `잔금이 부족해요 (필요 ${cost})`;
+  return null;
+}
+export function order(s, id) {
+  if (!id || orderBlocked(s, id)) return false;
+  snapshot(s);
+  const cost = orderCost(s);
+  if (cost === 0) s.orderTickets--;
+  else s.balance -= cost;
+  s.ordersToday = (s.ordersToday ?? 0) + 1;
+  s.orders = (s.orders ?? 0) + 1;
+  s.hand = { id, g: 1, rot: 0 };
+  if (ITEMS[id].egg) s.hand.grow = 0; // 마수는 성장 전으로 온다
+  s.ordering = true;
+  s.phase = 'place';
+  return true;
 }
 
 /* ---------- 계약 서명 ---------- */
@@ -982,7 +1057,13 @@ export function openShop(s) {
   s.balance += gain;
   if (!ok) s.lives--;
   const settle = isSettleDay(s.day);
-  s.history.push({ day: s.day, sales, pay, ok });
+  // 분야별 상품 매출(계약·결산 강화 보너스 제외): 결산 보상의 기준 분야 판정용
+  const catSales = Object.fromEntries(CAT_IDS.map((c) => [c, 0]));
+  for (const p of s.pieces) {
+    const r = ev.items.get(p.uid);
+    catSales[ITEMS[p.id].cat] += r.total - r.bonuses.filter((b) => b.kind === 'contract').reduce((a, b) => a + b.amount, 0);
+  }
+  s.history.push({ day: s.day, sales, pay, ok, catSales });
   s.last = { day: s.day, sales, pay, ok, gain, sum: ev.sum, perItem, customer, settle, lives: s.lives, favorGain, stageUp, growth, condResults, debt: !!debtDueToday(s) };
   s.undo = [];
   s.grace = false;
@@ -1034,29 +1115,60 @@ export function refuseRegular(s) {
 
 export const REWARDS = {
   priority: { name: '우선 입고 지정', text: '고른 상품이 입고 후보에 더 자주 나와요. 매번 보장되지는 않고, 한 종류만, 다음 결산일에 바꿀 수 있어요.' },
-  perma_alch: { name: '연금술 분야 강화', text: '이번 판 동안 연금술 상품마다 매일 +2' },
-  perma_gear: { name: '모험 장비 분야 강화', text: '이번 판 동안 장비 상품마다 매일 +2' },
-  perma_magic: { name: '마법 잡화 분야 강화', text: '이번 판 동안 마법 잡화 상품마다 매일 +2' },
-  expand: { name: '진열대 확장', text: '자물쇠 칸이 열려요' },
-  grade: { name: '중급 입고', text: '내일 첫 입고 후보가 모두 중급' },
+  ...Object.fromEntries(CAT_IDS.map((c) => [`perma_${c}`, { name: `${CATS[c].name} 분야 강화`, text: `이번 판 동안 ${CATS[c].name} 상품마다 매일 +2(반복 선택하면 누적)` }])),
+  grade: { name: '중급 입고', text: '내일 첫 입고 후보가 모두 Ⅱ등급' },
+  order: { name: '지정 발주권', text: '지정 발주 한 번을 무료로(하루 두 번 제한에는 포함, 최대 2장)' },
+  upgrade: { name: '등급 올리기 이용권', text: '진열 중인 상품 하나를 잔금 없이 한 등급 올려요(알 제외, Ⅲ등급까지)' },
   life: { name: '영혼의 불꽃 회복', text: '꺼진 불꽃 하나를 다시 밝혀요' },
-  cash: { name: '마왕의 팁', text: '잔금 +30' },
-  upgrade: { name: '등급 올리기 이용권', text: '진열 중인 상품 하나를 잔금 없이 한 등급 올려요(알 제외)' },
+  cash: { name: '마왕의 팁', text: '잔금 지원(그날 지정 발주 한 번 값)' },
 };
 
-function drawRewards(s) {
-  const out = [];
-  if (s.pieces.length) out.push('priority');
-  const pool = ['perma_alch', 'perma_gear', 'perma_magic', 'grade', 'cash'];
-  if (s.expand < EXPAND_STEPS.length) pool.push('expand', 'expand');
-  if (s.lives < MAX_LIVES) pool.push('life', 'life');
-  if (s.pieces.some((p) => !isEgg(p))) pool.push('upgrade', 'upgrade');
-  while (out.length < 3 && pool.length) {
-    const k = pool[Math.floor(rand(s) * pool.length)];
-    if (!out.includes(k)) out.push(k);
-    pool.splice(pool.indexOf(k), 1);
+// 결산 보상의 기준 분야: 주력 단골 분야, 없으면 최근 3번 영업에서 상품 매출이 가장 큰 분야
+export function focusCat(s) {
+  if (s.main) return CUSTOMERS[s.main].fav;
+  const recent = s.history.slice(-3);
+  const sum = Object.fromEntries(CAT_IDS.map((c) => [c, 0]));
+  for (const h of recent) for (const c of CAT_IDS) sum[c] += h.catSales?.[c] ?? 0;
+  if (CAT_IDS.every((c) => sum[c] === 0)) {
+    if (!s.pieces.length) return s.startCat;
+    for (const p of s.pieces) sum[ITEMS[p.id].cat] += 1;
   }
-  return out;
+  return CAT_IDS.slice().sort((a, b) => sum[b] - sum[a])[0];
+}
+
+// 세 자리: 1 지금 전략 강화 · 2 성장 방식 · 3 운영 안정. 낭비되는 보상은 내지 않는다.
+function drawRewards(s) {
+  const one = (list) => list[Math.floor(rand(s) * list.length)];
+  const kinds = new Set(s.pieces.map((p) => p.id));
+  const canPrio = [...kinds].some((k) => k !== s.priority);
+  const slot1 = canPrio && rand(s) < 0.35 ? 'priority' : `perma_${focusCat(s)}`;
+  const growth = ['grade'];
+  if ((s.orderTickets ?? 0) < MAX_ORDER_TICKETS) growth.push('order');
+  if (s.pieces.some((p) => !isEgg(p) && p.g < UPGRADE_MAX)) growth.push('upgrade');
+  const slot2 = one(growth);
+  const slot3 = s.lives < MAX_LIVES && rand(s) < 0.6 ? 'life' : 'cash';
+  s.rewardCash = orderBaseCost(s);
+  return [slot1, slot2, slot3];
+}
+
+// 보상 카드에 붙이는 지금 상점 기준 효과
+export function rewardPreview(s, key) {
+  if (key.startsWith('perma_')) {
+    const c = key.slice(6);
+    const cur = s.perma[c] ?? 0;
+    const now = income(s).sum.total;
+    const after = evaluate(s.pieces, { ...ctxFor(s), mods: { ...modsFor(s).mods, perma: { ...s.perma, [c]: cur + 2 } } }).sum.total;
+    return `현재 상품마다 +${cur} → +${cur + 2} · 현재 배치 기준 하루 매출 +${after - now}`;
+  }
+  switch (key) {
+    case 'cash': return `잔금 +${s.rewardCash || orderBaseCost(s)}`;
+    case 'order': return `보유 ${s.orderTickets ?? 0} → ${(s.orderTickets ?? 0) + 1}장 · 지금 값으로 ${orderBaseCost(s)} 아낌`;
+    case 'upgrade': return `보유 ${s.upTickets ?? 0} → ${(s.upTickets ?? 0) + 1}장`;
+    case 'life': return `불꽃 ${s.lives} → ${s.lives + 1}`;
+    case 'grade': return '내일 첫 입고 후보 셋이 Ⅱ등급';
+    case 'priority': return s.priority ? `지금 지정: ${ITEMS[s.priority].name}` : '아직 지정한 상품 없음';
+  }
+  return '';
 }
 
 export function takeReward(s, key, arg = null) {
@@ -1065,13 +1177,14 @@ export function takeReward(s, key, arg = null) {
     if (!arg || !s.pieces.some((p) => p.id === arg)) return false;
     s.priority = arg;
   }
-  if (key.startsWith('perma_')) s.perma[key.slice(6)] += 2;
-  if (key === 'expand') grow(s);
+  if (key.startsWith('perma_')) s.perma[key.slice(6)] = (s.perma[key.slice(6)] ?? 0) + 2;
+  if (key === 'order') s.orderTickets = Math.min(MAX_ORDER_TICKETS, (s.orderTickets ?? 0) + 1);
   if (key === 'grade') s.bonusGradeNext = true;
   if (key === 'life') s.lives = Math.min(MAX_LIVES, s.lives + 1);
-  if (key === 'cash') s.balance += 30;
+  if (key === 'cash') s.balance += s.rewardCash || orderBaseCost(s);
   if (key === 'upgrade') s.upTickets = (s.upTickets ?? 0) + 1;
   s.rewardOffer = null;
+  s.rewardLog = [...(s.rewardLog ?? []), key]; // 어떤 보상을 골랐는지(지표용)
   if (s.regulars.length) { s.phase = 'mainpick'; return true; }
   nextDay(s);
   return true;
@@ -1124,3 +1237,7 @@ export function better(a, b) {
   if (!b) return true;
   return a.days > b.days || (a.days === b.days && a.total > b.total);
 }
+
+// 테스트용
+export const __startDay = startDay;
+export const __drawRewards = drawRewards;

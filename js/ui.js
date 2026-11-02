@@ -73,7 +73,7 @@ function save() {
 }
 function loadRun() {
   const r = store.get(KEY_RUN);
-  return r && r.v === 4 && Array.isArray(r.pieces) ? r : null;
+  return r && (r.v === 4 || r.v === 5) && Array.isArray(r.pieces) ? G.migrate(r) : null;
 }
 const bestRecord = () => store.get(KEY_BEST);
 const tutorialDone = () => store.get(KEY_TUTORIAL) === true;
@@ -145,6 +145,7 @@ function resetSelection() {
   ghost = null;
   merging = null;
   pickedOffer = null;
+  orderOpen = false;
   handRot = s?.hand?.rot ?? 0;
   sel = s?.phase === 'place' && s.hand ? { kind: 'hand' } : null;
 }
@@ -229,6 +230,18 @@ function showMorning() {
   if (s.regulars.length) html += `<div class="sect"><h3>단골</h3><span>${s.regulars.length} / 2</span></div>` +
     s.regulars.map((g) => `<div class="c-row"><div><b>${CUSTOMERS[g].name}${s.main === g ? ' <span class="main-tag">주력</span>' : ''}</b><small>${stageLine(g)}${s.main === g ? ` · ${CATS[CUSTOMERS[g].fav].name} 입고 1번 자리` : ''}</small></div>${heartsHTML(s.favor[g] ?? 0)}</div>`).join('');
   if (active.length) html += `<div class="sect"><h3>진행 중인 계약</h3><span>${active.length} / 2</span></div>` + active.map(contractLine).join('');
+  const ex = s.lastExpand?.day === s.day ? s.lastExpand : null;
+  if (ex) {
+    const ch = ex.changed.map((c) => `${displayName(s.pieces.find((p) => p.uid === c.uid))} ${c.to - c.from > 0 ? '+' : ''}${c.to - c.from}`).join(' · ');
+    html += `<div class="expand-card"><b>진열대 확장 ${ex.from.cols}×${ex.from.rows} → ${ex.to.cols}×${ex.to.rows}</b>
+      <span>새 칸 ${ex.added}개가 오른쪽·아래에 생겼어요. 상품은 그 자리 그대로예요.</span>
+      <span>${ex.changed.length ? `조건이 달라진 상품: ${ch} · 지금 배치 기준 하루 매출 ${ex.delta >= 0 ? '+' : ''}${ex.delta}. 새 칸에 다시 배치해 되찾을 수 있어요.` : '지금 배치의 매출은 그대로예요.'}</span></div>`;
+  }
+  const nx = G.nextExpansion(s);
+  if (nx && nx.day === s.day + 1) {
+    const pv = G.expansionPreview(s, s.dim, { cols: Math.max(nx.cols, s.dim.cols), rows: Math.max(nx.rows, s.dim.rows) });
+    html += `<div class="expand-card soon"><b>내일 아침 진열대 확장 → ${nx.cols}×${nx.rows}</b><span>새 칸 ${pv.added}개${pv.changed.length ? ` · 가장자리 조건이 바뀌는 상품 ${pv.changed.length}개, 지금 배치 기준 하루 매출 ${pv.delta >= 0 ? '+' : ''}${pv.delta}` : ''}</span></div>`;
+  }
   const warn = conflictText();
   if (warn) html += `<p class="warn">${warn}</p>`;
   if (s.grace) html += `<div class="grace"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg><div><b>마왕의 유예</b>오늘 상품 후보 전체를 한 번 무료로 다시 뽑을 수 있어요. 오늘이 끝나면 사라져요.</div></div>`;
@@ -251,7 +264,8 @@ const pct = (v, n) => (v / n) * 100;
 const GAP = '0.5cqw';
 
 function viewDim() {
-  return s.expand < EXPAND_STEPS.length ? EXPAND_STEPS[s.expand] : s.dim;
+  const n = G.nextExpansion(s);
+  return n ? { cols: Math.max(n.cols, s.dim.cols), rows: Math.max(n.rows, s.dim.rows) } : s.dim;
 }
 
 function cellBox(dim, x, y, out) {
@@ -479,11 +493,17 @@ function render() {
   shelf.hidden = false;
   shelf.classList.toggle('peek', picking);
   const pickId = picking && pickedOffer !== null ? s.offers[pickedOffer]?.id : null;
+  const zoomOn = zoom && !picking;
+  shelf.classList.toggle('zoomed', zoomOn);
+  $('btn-zoom').hidden = picking || s.dim.cols * s.dim.rows < 35;
+  $('btn-zoom').textContent = zoomOn ? '전체 보기' : '확대 보기';
+  $('zoom-hint').hidden = !zoomOn;
 
   // 진열대
   const board = $('board');
   const vdim = viewDim();
   sizeBoard(board, vdim, picking ? 24 : 34);
+  if (zoomOn) shelf.style.width = '100%';
   const g = ghostPiece();
   const matUids = new Set(merging ? merging.set.map((q) => q.uid) : []);
   // 선택한 상품이 받는 효과의 출처: 화살표와 받는 양
@@ -527,6 +547,7 @@ function render() {
     renderActions(coach);
     return;
   }
+  if (zoomOn) focusZoom();
   renderPanel(ev, prevEv, coach);
   renderActions(coach);
 }
@@ -568,7 +589,7 @@ function renderStrip() {
     }
     html += `<dl class="pguests">${guestLine('오늘', today, true)}${guestLine('내일', tomorrow, false)}</dl>`;
     if (active.length) html += `<div class="pcons">${active.map((c) => { const t = G.CONTRACTS[c.id]; return `<button class="chip contract" data-go="contract-info" data-c="${c.id}">📜 ${t.name} · ${t.type === 'cond' ? G.condProgressText(s, c) : `${G.contractDaysLeft(s, c)}일 남음`}</button>`; }).join('')}</div>`;
-    const extra = [s.priority ? `★ 우선 입고 ${ITEMS[s.priority].name}` : '', s.freeTickets ? `🎟 1번 다시 뽑기 ${s.freeTickets}장` : '', s.tickets ? `추가 입고 이용권 ${s.tickets}장` : '', s.upTickets ? `⇧ 등급 올리기 이용권 ${s.upTickets}장` : ''].filter(Boolean);
+    const extra = [s.priority ? `★ 우선 입고 ${ITEMS[s.priority].name}` : '', s.freeTickets ? `🎟 1번 다시 뽑기 ${s.freeTickets}장` : '', s.tickets ? `추가 입고 이용권 ${s.tickets}장` : '', s.upTickets ? `⇧ 등급 올리기 이용권 ${s.upTickets}장` : '', s.orderTickets ? `📦 지정 발주권 ${s.orderTickets}장` : ''].filter(Boolean);
     if (extra.length) html += `<p class="pnote">${extra.join(' · ')}</p>`;
     html += '</div>';
   }
@@ -728,7 +749,7 @@ function renderPanel(ev, prevEv, coach) {
   if (s.phase === 'place' && s.hand) {
     const h = { ...s.hand, uid: -1 };
     if (!sel) {
-      panel.innerHTML = detailHTML(h, null, null, { acts: '<button class="small-btn hot" data-act="hold">새 상품 들기</button>', hint: '진열대 정리 중이에요. 상품을 눌러 옮기거나 버리거나 합성한 뒤 [새 상품 들기]를 누르세요.' });
+      panel.innerHTML = detailHTML(h, null, null, { acts: '<button class="small-btn hot" data-act="hold">새 상품 들기</button>', hint: `${s.ordering ? '지정 발주 상품이에요. ' : ''}진열대 정리 중이에요. 상품을 눌러 옮기거나 버리거나 합성한 뒤 [새 상품 들기]를 누르세요.` });
       return;
     }
     let after = null, hint = '진열대에서 놓을 칸을 누르세요.', warn = false;
@@ -745,14 +766,38 @@ function renderPanel(ev, prevEv, coach) {
   }
 
   // 정리 단계
-  const extra = G.extraCost(s), expand = G.expandCost(s);
-  const next = EXPAND_STEPS[s.expand];
+  const extra = G.extraCost(s);
   const blocked = G.extraBlocked(s);
+  if (orderOpen) { panel.innerHTML = orderPanelHTML(); return; }
+  const oc = G.orderCost(s);
+  const ob = G.orderBlocked(s, null);
+  const nx = G.nextExpansion(s);
   panel.innerHTML = `<div class="done-line"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>오늘 입고 완료 · 상품을 눌러 상세·합성을 볼 수 있어요</div>` + eggListHTML(null) +
     `<div class="shopbar">
-      <button class="btn" data-act="extra" ${blocked || s.balance < extra ? 'disabled' : ''}>추가 입고<small>${blocked ? '검소한 영업 중' : s.tickets ? `이용권 1장 사용` : `잔금 ${extra}`}</small></button>
-      <button class="btn" data-act="expand" ${expand === null || s.balance < expand ? 'disabled' : ''}>${expand === null ? '진열대 최대' : '자물쇠 칸 열기'}<small>${expand === null ? `${s.dim.cols}×${s.dim.rows}` : `잔금 ${expand} · ${next.cols}×${next.rows}`}</small></button>
-    </div>` + (coach === 3 ? `<div style="margin-top:14px">${coachHTML(3, 'down')}</div>` : '');
+      <button class="btn" data-act="extra" ${blocked || s.balance < extra ? 'disabled' : ''}>추가 입고<small>${blocked ? '검소한 영업 중' : s.tickets ? `이용권 1장 사용` : `잔금 ${extra} · 후보 셋 중 하나`}</small></button>
+      <button class="btn order" data-act="order-open" ${ob && !/잔금/.test(ob) ? 'disabled' : ''}>지정 발주<small>${blocked ? '검소한 영업 중' : (s.ordersToday ?? 0) >= G.ORDERS_PER_DAY ? '오늘 2번 모두 사용' : `${oc === 0 ? '발주권 1장' : `잔금 ${oc}`} · 오늘 ${s.ordersToday ?? 0}/${G.ORDERS_PER_DAY}`}</small></button>
+    </div>
+    <p class="expand-note">${nx ? `진열대 ${s.dim.cols}×${s.dim.rows} · <b>${nx.day}일 차</b> 아침에 ${nx.cols}×${nx.rows}로 넓어져요` : `진열대 최대 크기 ${s.dim.cols}×${s.dim.rows}`}</p>` + (coach === 3 ? `<div style="margin-top:14px">${coachHTML(3, 'down')}</div>` : '');
+}
+
+// 지정 발주: 진열 중인 종류 중 하나를 확정 입고(1등급, 마수는 알)
+let orderOpen = false;
+function orderPanelHTML() {
+  const cost = G.orderCost(s);
+  const rows = G.orderables(s).map((id) => {
+    const it = ITEMS[id];
+    const why = G.orderBlocked(s, id);
+    const have = s.pieces.filter((p) => p.id === id);
+    const g1 = have.filter((p) => p.g === 1 && !isEgg(p)).length;
+    const note = it.egg ? `${it.egg.name}(성장 전)으로 와요` : g1 === 2 ? '받으면 바로 합성할 수 있어요' : `진열 ${have.length}개 · Ⅰ등급 ${g1}개`;
+    return `<button class="orow order-row" data-order="${id}" ${why ? 'disabled' : ''}>
+      <span class="art"><img src="${itemImg(it.egg ? `${id}_egg` : id)}" alt=""></span>
+      <span class="body"><span class="nm">${it.egg ? it.egg.name : it.name}<span class="r">Ⅰ</span></span><span class="eff">${why ?? note}</span></span></button>`;
+  }).join('');
+  return `<div class="order-head"><b>지정 발주</b><span>${cost === 0 ? `발주권 사용 (보유 ${s.orderTickets})` : `잔금 ${cost}`} · 오늘 ${s.ordersToday ?? 0}/${G.ORDERS_PER_DAY}${(s.ordersToday ?? 0) === 0 && cost ? ` · 두 번째는 ${cost * 2}` : ''}</span></div>
+    <p class="fine">진열 중인 상품 종류만 1등급으로 확정 입고해요. 받은 상품은 놓거나, 손에 든 채로 합성하거나, 버릴 수 있어요. 기본 입고 횟수는 그대로예요.</p>
+    <div class="offer-list">${rows}</div>
+    <div class="rr-row single"><button class="btn rr" data-act="order-close">닫기</button></div>`;
 }
 
 function renderActions(coach) {
@@ -894,14 +939,14 @@ function showReward() {
   const kinds = [...new Set(s.pieces.map((p) => p.id))];
   $('rw-list').innerHTML = s.rewardOffer.map((k) => {
     const r = G.REWARDS[k];
-    let inner = `<b>${r.name}</b><span>${r.text}</span>`;
+    let inner = `<b>${r.name}</b><span>${r.text}</span><span class="pv">${G.rewardPreview(s, k)}</span>`;
     if (k === 'priority' && pickedReward === 'priority') {
       inner += `<div class="prio-grid">${kinds.map((id) => `<button data-prio="${id}" class="${pickedPrio === id ? 'sel' : ''}"><img src="${itemImg(id)}" alt="">${ITEMS[id].name}</button>`).join('')}</div>` +
         `<span class="now">지금 지정: ${pickedPrio ? ITEMS[pickedPrio].name : s.priority ? ITEMS[s.priority].name : '없음'} · 다음 결산일(${(s.last?.day ?? s.day) + G.SETTLE_EVERY}일 차)에 바꿀 수 있어요</span>`;
     }
     return `<div class="rw${pickedReward === k ? ' sel' : ''}" data-reward="${k}" role="button" tabindex="0">${inner}</div>`;
   }).join('');
-  $('rw-note').textContent = s.expand >= EXPAND_STEPS.length ? '진열대가 최대 크기라 확장 보상은 다른 보상으로 바뀌었어요.' : '';
+  $('rw-note').textContent = '1 지금 전략 강화 · 2 성장 방식 · 3 운영 안정 중에서 하나를 골라요. 진열대 확장은 결산 다음 날 아침 자동이에요.';
   const btn = $('btn-reward');
   const ready = pickedReward && (pickedReward !== 'priority' || pickedPrio);
   btn.disabled = !ready;
@@ -1204,8 +1249,8 @@ const clampToDim = (x, y) => ({ x: Math.min(x, s.dim.cols - 1), y: Math.min(y, s
 function onTap(x, y) {
   if (merging) return;
   if (isLocked(x, y)) {
-    const cost = G.expandCost(s);
-    toast(cost === null ? '더 넓힐 수 없어요' : `잔금 ${cost}으로 자물쇠 칸을 열 수 있어요 (오늘 입고를 마친 뒤)`);
+    const n = G.nextExpansion(s);
+    toast(n ? `${n.day}일 차 아침에 진열대가 ${n.cols}×${n.rows}로 넓어지며 열려요` : '더 넓힐 수 없어요');
     return;
   }
   const occ = occupancy(s.dim, s.pieces)[y][x];
@@ -1228,15 +1273,26 @@ function onTap(x, y) {
   render();
 }
 
+// 확대 보기에서는 손가락으로 밀면 진열대가 움직이고, 끌어서 놓기는 꺼진다(밀다가 상품이 놓이지 않게)
+let zoom = false;
+let zoomFocus = '';
+function focusZoom() {
+  const key = sel ? `${sel.kind}:${sel.uid ?? ''}:${ghost ? `${ghost.x},${ghost.y}` : ''}` : '';
+  if (!key || key === zoomFocus) { zoomFocus = key; return; }
+  zoomFocus = key;
+  requestAnimationFrame(() => document.querySelector('#board .piece.ghost, #board .piece.selected')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }));
+}
+
 let drag = null;
 function onPointerDown(ev) {
   if (ev.button > 0 || merging) return;
   const { x, y } = cellFromPoint(ev);
-  drag = { x0: ev.clientX, y0: ev.clientY, cell: { x, y }, moved: false };
-  $('board').setPointerCapture(ev.pointerId);
+  drag = { x0: ev.clientX, y0: ev.clientY, cell: { x, y }, moved: false, pan: zoom };
+  if (!zoom) $('board').setPointerCapture(ev.pointerId);
 }
 function onPointerMove(ev) {
   if (!drag) return;
+  if (drag.pan) { if (Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) >= 10) drag.moved = drag.dead = true; return; }
   if (!drag.moved) {
     if (Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0) < 10) return;
     const { x, y } = drag.cell;
@@ -1330,6 +1386,20 @@ function bind() {
   });
 
   const onAct = (e) => {
+    const ord = e.target.closest('[data-order]');
+    if (ord) {
+      const id = ord.dataset.order;
+      const why = G.orderBlocked(s, id);
+      if (why) { toast(why); return; }
+      const free = G.orderCost(s) === 0;
+      orderOpen = false;
+      if (act((x) => G.order(x, id), 'restock_new')) {
+        select({ kind: 'hand' });
+        toast(`${ITEMS[id].egg ? ITEMS[id].egg.name : ITEMS[id].name} 발주 완료${free ? ' · 발주권 사용' : ''} · 놓거나 합성하세요`);
+        render();
+      }
+      return;
+    }
     const offer = e.target.closest('[data-offer]');
     if (offer) { pickedOffer = +offer.dataset.offer; S.play('ui_tap'); return render(); }
     const go = e.target.closest('[data-go]');
@@ -1346,6 +1416,12 @@ function bind() {
     if (!btn || btn.disabled) return;
     const a = btn.dataset.act;
     if (a === 'deselect' || a === 'tidy') { select(null); render(); }
+    if (a === 'order-open') {
+      const why = G.orderBlocked(s, null);
+      if (why && !/잔금/.test(why)) { toast(why); return; }
+      orderOpen = true; S.play('ui_tap'); render();
+    }
+    if (a === 'order-close') { orderOpen = false; render(); }
     if (a === 'hold') { select({ kind: 'hand' }); render(); }
     if (a === 'discard') discardSelected();
     if (a === 'upgrade' && sel?.kind === 'piece') {
@@ -1360,7 +1436,6 @@ function bind() {
     if (a === 'extra') act(G.buyExtra, 'restock_new');
     if (a === 'reroll-all') { pickedOffer = null; act(G.reroll, 'reroll'); }
     if (a === 'reroll-one') { pickedOffer = null; act(G.rerollSlot1, 'free_ticket'); }
-    if (a === 'expand' && act(G.buyExpand, 'reward_pick')) toast(`진열대가 ${s.dim.cols}×${s.dim.rows}로 넓어졌어요`);
   };
   $('panel').addEventListener('click', onAct);
   $('p-chips').addEventListener('click', onAct);
@@ -1475,7 +1550,12 @@ function bind() {
 
   $('btn-rotate').onclick = rotate;
   $('btn-undo').onclick = undo;
-  $('btn-skip').onclick = () => { const b = G.skipBonus(s); pickedOffer = null; if (act(G.skip, 'coin_tick')) toast(`이번 입고를 넘기고 잔금 +${b}`); };
+  $('btn-zoom').onclick = () => { zoom = !zoom; zoomFocus = ''; S.play('ui_tap'); render(); };
+  $('btn-skip').onclick = () => {
+    const b = G.skipBonus(s), ord = s.ordering;
+    pickedOffer = null;
+    if (act(G.skip, ord ? 'discard' : 'coin_tick')) toast(ord ? '발주 상품을 버렸어요. 되돌리기로 살릴 수 있어요.' : `이번 입고를 넘기고 잔금 +${b}`);
+  };
   $('btn-reroll').onclick = () => { pickedOffer = null; act(G.reroll, 'reroll'); };
   $('btn-merge-cancel').onclick = () => { merging = null; render(); };
   $('btn-main').onclick = () => {
@@ -1699,8 +1779,8 @@ const LESSONS = [
   },
   {
     title: '잔금 쓰기',
-    body: '정상 납부하고 남은 돈이 <b>잔금</b>이에요. 정리 화면에서 [추가 입고]나 [자물쇠 칸 열기]를 사 보세요. 잔금으로 납부 부족분을 메우지는 못해요.',
-    goal: '잔금으로 추가 입고 또는 진열대 확장',
+    body: '정상 납부하고 남은 돈이 <b>잔금</b>이에요. 정리 화면에서 [추가 입고](후보 셋 중 하나)나 [지정 발주](진열 중인 상품을 확정 입고, 하루 두 번)를 써 보세요. 회복 물약을 발주하면 손에 든 채로 진열된 둘과 합성할 수 있어요. 진열대는 결산일 다음 날 아침에 저절로 넓어져요.',
+    goal: '잔금으로 추가 입고 또는 지정 발주',
     setup: () => {
       const s = lessonState(108, 7, (x) => guestsFor(x, ['school', 'noble', 'goblins', 'witches', 'adventurers', 'witches', 'school', 'noble']));
       tp(s, [['potion', 0, 0], ['herb', 1, 0], ['potion', 2, 0], ['tome', 4, 0], ['candle', 3, 0]]);
@@ -1708,7 +1788,7 @@ const LESSONS = [
       arrangeIt(s);
       return s;
     },
-    done: (s) => s.expand >= 1 || s.extras >= 1,
+    done: (s) => (s.ordersToday ?? 0) >= 1 || s.extras >= 1,
   },
 ];
 

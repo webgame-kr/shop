@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ITEMS, ITEM_IDS, CAT_IDS, canPlace, cellsOf, evaluate, gradeBase, shapeOf, START_SIZE, growthCheck, isEgg, mergeSet } from '../js/rules.js';
+import { ITEMS, ITEM_IDS, CAT_IDS, CUSTOMERS, canPlace, cellsOf, evaluate, gradeBase, shapeOf, START_SIZE, growthCheck, isEgg, mergeSet } from '../js/rules.js';
 import * as G from '../js/game.js';
 
 const dim = { cols: 5, rows: 4 };
@@ -306,14 +306,130 @@ test('저장한 상태로 이어 해도 후보·손님이 같다', () => {
   assert.equal(G.customerOn(a, 9), G.customerOn(b, 9));
 });
 
-test('진열대는 정해진 크기까지만 커진다', () => {
+test('진열대는 결산일 다음 날 자동으로 넓어진다(최대 8×7), 사는 확장은 없다', () => {
+  assert.deepEqual(G.newGame(1).dim, START_SIZE);
   const s = arrange(9);
   s.balance = 10000;
-  let n = 0;
-  while (G.buyExpand(s)) n++;
-  assert.equal(n, 4);
-  assert.deepEqual(s.dim, { cols: 7, rows: 6 });
-  assert.deepEqual(G.newGame(1).dim, START_SIZE);
+  assert.equal(G.buyExpand(s), false);
+  const sizes = [];
+  s.pieces = [P('potion', 4, 3)]; // 오른쪽 아래 구석: 확장 뒤에도 자리 그대로
+  for (let d = 1; d <= 40; d++) {
+    s.day = d;
+    G.__startDay(s);
+    sizes.push(`${s.dim.cols}x${s.dim.rows}`);
+  }
+  assert.equal(sizes[4], '5x4');
+  assert.equal(sizes[5], '6x4');
+  assert.equal(sizes[10], '6x5');
+  assert.equal(sizes[30], '8x7');
+  assert.equal(sizes[39], '8x7');
+  assert.deepEqual([s.pieces[0].x, s.pieces[0].y], [4, 3]);
+  assert.equal(G.nextExpansion(s), null);
+  // 납부에 실패해도 살아서 다음 날이 되면 넓어진다
+  const f = arrange(10);
+  f.day = 5;
+  f.pieces = [P('herb', 0, 0)];
+  const r = G.openShop(f);
+  assert.equal(r.ok, false);
+  assert.equal(f.day, 6);
+  assert.deepEqual(f.dim, { cols: 6, rows: 4 });
+  assert.equal(f.lastExpand.added, 4);
+  // 이전 형식 판: 진열대가 줄지 않는다
+  const old = { ...G.newGame(2), v: 4, day: 12, dim: { cols: 7, rows: 4 } };
+  delete old.orderTickets;
+  const m = G.migrate(old);
+  assert.equal(m.v, 5);
+  assert.deepEqual(m.dim, { cols: 7, rows: 5 });
+});
+
+test('지정 발주: 진열 중인 종류만, 하루 두 번, 두 번째는 두 배, 발주권, 공간 확인, 되돌리기', () => {
+  const s = arrange(14);
+  s.day = 12;
+  s.balance = 200;
+  s.pieces = [P('lavabread', 0, 0), P('lavabread', 2, 0), { ...P('slime', 4, 0), grow: 2 }];
+  assert.equal(G.orderBaseCost(s), 45);
+  assert.ok(G.orderBlocked(s, 'potion'));
+  const picks = s.picksDone;
+  assert.ok(G.order(s, 'lavabread'));
+  assert.equal(s.balance, 155);
+  assert.equal(s.phase, 'place');
+  assert.ok(G.merge(s, 'hand'));          // 손에 든 빵 + 진열된 빵 둘 → Ⅱ
+  assert.equal(s.hand.g, 2);
+  assert.ok(G.placeHand(s, 0, 1, 0));
+  assert.equal(s.phase, 'arrange');
+  assert.equal(s.picksDone, picks);       // 기본 입고 횟수는 그대로
+  assert.equal(G.orderCost(s), 90);
+  assert.match(G.orderBlocked(s, 'slime'), /변이/); // 처음 Ⅱ등급이 되면 변이부터
+  G.chooseMutation(s, 'A');
+  // 마수는 성체를 가져도 알로 온다
+  assert.ok(G.order(s, 'slime'));
+  assert.equal(s.hand.grow, 0);
+  assert.ok(G.undo(s));                   // 되돌리면 잔금·횟수·손 모두 원래대로
+  assert.equal(s.hand, null);
+  assert.equal(s.ordersToday, 1);
+  assert.equal(s.balance, 155);
+  assert.ok(G.order(s, 'slime'));
+  G.skip(s);
+  assert.match(G.orderBlocked(s, 'slime'), /하루 2번/);
+  // 발주권은 비용만 면제
+  const t = arrange(15);
+  t.day = 3;
+  t.pieces = [P('potion', 0, 0)];
+  t.orderTickets = 1;
+  assert.equal(G.orderCost(t), 0);
+  assert.ok(G.order(t, 'potion'));
+  assert.equal(t.orderTickets, 0);
+  // 공간도 합성 재료도 없으면 주문할 수 없다
+  const full = arrange(16);
+  full.pieces = [];
+  for (let y = 0; y < 4; y++) for (let x = 0; x < 5; x++) full.pieces.push(P(x === 0 && y === 0 ? 'ruby' : 'coin', x, y));
+  full.balance = 500;
+  assert.match(G.orderBlocked(full, 'ruby'), /받을 공간/);
+  assert.equal(G.orderBlocked(full, 'coin'), null);
+  // 계약의 추가 입고 금지는 발주에도
+  const fr = arrange(17);
+  fr.pieces = [P('potion', 0, 0)];
+  fr.balance = 100;
+  fr.contracts = [{ id: 'frugal', day: fr.day, data: {}, progress: 0 }];
+  assert.ok(G.orderBlocked(fr, 'potion'));
+});
+
+test('결산 보상: 세 자리 역할, 여섯 분야 강화, 낭비 방지, 잔금 지원은 발주 한 번 값', () => {
+  for (const cat of CAT_IDS) {
+    const s = arrange(40);
+    s.day = 10;
+    s.lives = 3;
+    s.main = Object.keys(G.REGULAR).find((g) => CUSTOMERS[g].fav === cat);
+    s.regulars = [s.main];
+    s.pieces = [P('potion', 0, 0)];
+    for (let i = 0; i < 10; i++) {
+      const r = G.__drawRewards(s);
+      assert.equal(new Set(r).size, 3);
+      assert.ok(r[0] === 'priority' || r[0] === `perma_${cat}`, r[0]);
+      assert.ok(['grade', 'order', 'upgrade'].includes(r[1]));
+      assert.equal(r[2], 'cash');           // 불꽃이 가득하면 회복은 나오지 않는다
+    }
+  }
+  const s = arrange(41);
+  s.day = 15;
+  s.pieces = [P('lavabread', 0, 0), P('ghostcheese', 2, 0)];
+  s.history = [{ catSales: { food: 30, alch: 5 } }];
+  assert.equal(G.focusCat(s), 'food');
+  s.orderTickets = 2;
+  for (let i = 0; i < 10; i++) assert.ok(!G.__drawRewards(s).includes('order'));
+  assert.match(G.rewardPreview(s, 'perma_food'), /하루 매출 \+4/);
+  s.rewardOffer = ['perma_food', 'grade', 'cash'];
+  s.phase = 'reward';
+  const before = s.balance;
+  G.takeReward(s, 'cash');
+  assert.equal(s.balance, before + G.orderBaseCost({ day: 15 }));
+  // 신규 분야 강화가 실제 매출에 들어간다
+  const t = arrange(42);
+  t.pieces = [{ ...P('wyvern', 0, 0), grow: 0 }];
+  const b0 = G.income(t).sum.total;
+  t.perma.beast = 2;
+  assert.equal(G.income(t).sum.total, b0 + 2);
+  assert.equal(t.pieces[0].grow, 0);
 });
 
 test('플레이 테스트 보고서 수정: 계약 중첩·반복, 독점 입고 대가, 알 이름, 3번 자리', () => {

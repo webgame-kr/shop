@@ -53,16 +53,15 @@ function casual(s, rand) {
   }
 }
 
-// 오늘 매출이 가장 크게 오르는 후보·위치를 고른다. 자리가 부족하면 합성하고, 잔금으로 확장·추가 입고.
+// 오늘 매출이 가장 크게 오르는 후보·위치를 고른다. 자리가 부족하면 합성하고, 잔금으로 지정 발주·등급 올리기·추가 입고.
 function greedy(s) {
   if (s.phase === 'reward') {
-    const pref = ['expand', 'life', 'upgrade', 'perma_gear', 'perma_magic', 'perma_alch', 'cash', 'grade', 'priority'];
-    const k = pref.find((r) => s.rewardOffer.includes(r));
+    const pref = ['life', 'order', 'upgrade', 'perma_', 'grade', 'cash', 'priority'];
+    const k = pref.map((r) => s.rewardOffer.find((o) => o.startsWith(r))).find(Boolean);
     G.takeReward(s, k, k === 'priority' ? s.pieces[0].id : null);
     return;
   }
   if (s.contractOffer) G.refuseContracts(s);
-  if (G.expandCost(s) !== null && s.balance >= G.expandCost(s) + 10) G.buyExpand(s);
   // 빈칸이 적으면 합성
   for (const p of s.pieces.slice()) {
     const free = s.dim.cols * s.dim.rows - s.pieces.reduce((a, q) => a + ITEMS[q.id].cells.length, 0);
@@ -87,8 +86,19 @@ function greedy(s) {
     G.placeHand(s, best.sp.x, best.sp.y, best.sp.rot);
     return;
   }
-  // 확장이 끝났거나 멀었으면, 매출이 가장 많이 오르는 상품의 등급을 올린다(잔금 20은 남김)
-  if (s.phase === 'arrange' && (G.expandCost(s) === null || s.balance > G.expandCost(s) + 60)) {
+  // 지정 발주: Ⅰ등급 두 개인 상품을 주문해 손에 든 채 합성(잔금 30은 남김)
+  if (s.phase === 'arrange') {
+    const cost = G.orderCost(s);
+    const want = G.orderables(s).find((id) => !ITEMS[id].egg && s.pieces.filter((p) => p.id === id && p.g === 1).length === 2 && !G.orderBlocked(s, id));
+    if (want && s.balance >= cost + 30 && G.order(s, want)) {
+      G.merge(s, 'hand');
+      const sp = spots(s, s.hand.id, s.hand.g)[0];
+      if (sp) G.placeHand(s, sp.x, sp.y, sp.rot); else G.skip(s);
+      return;
+    }
+  }
+  // 매출이 가장 많이 오르는 상품의 등급을 올린다(잔금 20은 남김)
+  if (s.phase === 'arrange') {
     const base = G.income(s).sum.total;
     let best = null;
     for (const p of s.pieces) {
@@ -103,8 +113,11 @@ function greedy(s) {
 }
 
 const CATS6 = ['alch', 'gear', 'magic', 'food', 'treasure', 'beast'];
+// 기획서 9장 지표: 첫 불꽃 손실, 잔금, 빈칸, 합성·발주·새로고침, 결산 보상 선택, 최대 확장 뒤 생존
 function play(seed, bot) {
   const s = G.newGame(seed, CATS6[seed % 6]);
+  const m = { firstLoss: null, balance: [], empty: [], rewards: {}, rerolls: 0 };
+  const take = G.takeReward;
   let r = seed ^ 0x5bd1e995;
   const rand = () => ((r = (Math.imul(r, 1664525) + 1013904223) | 0) >>> 0) / 4294967296;
   let guard = 0;
@@ -115,23 +128,40 @@ function play(seed, bot) {
     if (s.phase === 'mainpick') { G.settleMain(s, G.mainRewardOptions(s).slice(-1)[0] ?? null, null); continue; }
     if (s.phase === 'arrange' && (bot === casual || s.balance < G.extraCost(s) + 25)) {
       if (bot === greedy) { const before = s.balance; greedy(s); if (s.balance !== before) continue; }
-      G.openShop(s);
+      const occ = s.pieces.reduce((a, q) => a + ITEMS[q.id].cells.length, 0);
+      m.empty.push(s.dim.cols * s.dim.rows - occ);
+      const r = G.openShop(s);
+      m.balance.push(s.balance);
+      if (r && !r.ok && m.firstLoss === null) m.firstLoss = r.day;
       continue;
     }
-    if (s.phase === 'reward' && bot === casual) { const k = s.rewardOffer.find((r) => r !== 'priority') ?? 'priority'; G.takeReward(s, k, s.pieces[0]?.id); continue; }
+    if (s.phase === 'reward') {
+      const before = s.rewardOffer.slice();
+      if (bot === casual) { const k = before.find((x) => x !== 'priority') ?? 'priority'; take(s, k, s.pieces[0]?.id); }
+      else bot(s, rand);
+      continue;
+    }
     if (s.phase === 'place') { G.skip(s); continue; }
     bot(s, rand);
   }
+  s.metrics = m;
   return s;
 }
 
 for (const [name, bot] of [['casual', casual], ['greedy', greedy]].filter(([n]) => !only || n === only)) {
   const t0 = Date.now();
-  const days = [];
-  for (let i = 1; i <= runs; i++) days.push(play(i * 7919, bot).day);
-  days.sort((a, b) => a - b);
+  const games = [];
+  for (let i = 1; i <= runs; i++) games.push(play(i * 7919, bot));
+  const days = games.map((g) => g.day).sort((a, b) => a - b);
   const q = (f) => days[Math.floor(f * (days.length - 1))];
+  const med = (xs) => { const a = xs.filter((x) => x !== null).sort((x, y) => x - y); return a.length ? a[Math.floor((a.length - 1) / 2)] : '-'; };
+  const avg = (xs) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : 0);
   console.log(`[${name}] ${runs}판 생존 일수  최소 ${q(0)} / 하위10% ${q(0.1)} / 중앙 ${q(0.5)} / 상위10% ${q(0.9)} / 최대 ${q(1)} · ${((Date.now() - t0) / 1000).toFixed(1)}초`);
+  const rewards = {};
+  for (const g of games) for (const h of g.rewardLog ?? []) rewards[h] = (rewards[h] ?? 0) + 1;
+  console.log(`  첫 불꽃 손실(중앙) ${med(games.map((g) => g.metrics.firstLoss))}일 · 영업 뒤 잔금 평균 ${avg(games.flatMap((g) => g.metrics.balance))} · 영업 때 빈칸 평균 ${avg(games.flatMap((g) => g.metrics.empty))}`);
+  console.log(`  판당 합성 ${avg(games.map((g) => g.mergeCount))} · 지정 발주 ${avg(games.map((g) => g.orders ?? 0))} · 등급 올리기 ${avg(games.map((g) => g.upgrades ?? 0))} · 최대 확장(31일) 뒤 생존 ${games.filter((g) => g.day > 31).length}판, 평균 ${avg(games.filter((g) => g.day > 31).map((g) => g.day - 31))}일`);
+  console.log(`  결산 보상 선택 ${Object.entries(rewards).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ') || '없음'}`);
 }
 const curve = [1, 2, 3, 5, 10, 15, 20, 25, 30, 40].map((d) => `${d}일 ${G.basePay(d)}`).join(' · ');
 console.log(`납부액: ${curve}`);

@@ -21,7 +21,9 @@ const say = (...l) => out.push(l.join(' '));
 
 function load() {
   if (!existsSync(FILE)) fail('진행 중인 판이 없어요. `new [시드] [시작분야]`로 시작하세요.');
-  return JSON.parse(readFileSync(FILE, 'utf8'));
+  const s = G.migrate(JSON.parse(readFileSync(FILE, 'utf8')));
+  if (!s) fail('예전 형식의 판이라 이어 할 수 없어요. `new`로 새로 시작하세요.');
+  return s;
 }
 function save(s) {
   const { undo, ...rest } = s;
@@ -112,6 +114,11 @@ function show(s) {
   say('');
 
   // 지금 해야 하는 결정
+  if (s.lastExpand?.day === s.day) {
+    const ex = s.lastExpand;
+    say(`▶ 진열대 확장 ${ex.from.cols}×${ex.from.rows} → ${ex.to.cols}×${ex.to.rows} · 새 칸 ${ex.added}개 · 조건이 바뀐 상품 ${ex.changed.length}개 · 지금 배치 기준 ${ex.delta >= 0 ? '+' : ''}${ex.delta}`);
+  }
+  if (s.ordering) say('▶ 지정 발주 상품을 들고 있어요(기본 입고 횟수와 별개). place/merge hand/skip(버리기) 중 하나로 처리하세요.');
   if (s.regularOffer) {
     say(`▶ 단골 제안: ${guestName(s.regularOffer)}. \`accept${s.regulars.length >= 2 ? ' <내보낼 단골 id>' : ''}\` 또는 \`decline\`  (단골 id: ${s.regulars.join(', ') || '없음'})`);
   }
@@ -140,13 +147,16 @@ function show(s) {
     say(`  \`place <x> <y> [회전0-3]\` (기준점 = 모양의 왼쪽 위)${spot ? ` · 예: 들어가는 자리 place ${spot.x} ${spot.y} ${spot.rot}` : ' · 들어갈 자리가 없어요(discard/merge/skip)'}${G.mergePlan(s, 'hand') ? ' · `merge hand` 가능' : ''}`);
   }
   if (s.phase === 'arrange') {
-    const cost = G.extraCost(s), ex = G.expandCost(s);
-    say(`▶ 정리: \`open\`(영업)${G.extraBlocked(s) ? '' : `, \`extra\`(추가 입고 ${s.tickets ? '이용권' : `잔금 ${cost}`})`}${ex !== null ? `, \`expand\`(잔금 ${ex})` : ''}, \`upgrade <번호>\`, \`move\`, \`merge\`, \`discard\`(팔기), \`undo\``);
+    const cost = G.extraCost(s);
+    const nx = G.nextExpansion(s);
+    const ob = G.orderBlocked(s, null);
+    say(`▶ 정리: \`open\`(영업)${G.extraBlocked(s) ? '' : `, \`extra\`(추가 입고 ${s.tickets ? '이용권' : `잔금 ${cost}`})`}${ob ? '' : `, \`order <상품id>\`(지정 발주 ${G.orderCost(s) === 0 ? '발주권' : `잔금 ${G.orderCost(s)}`}, 오늘 ${s.ordersToday}/${G.ORDERS_PER_DAY}: ${G.orderables(s).filter((id) => !G.orderBlocked(s, id)).join(' ') || '받을 공간 없음'})`}, \`upgrade <번호>\`, \`move\`, \`merge\`, \`discard\`(팔기), \`undo\``);
     if (!G.canOpen(s)) say('  (영업 전에 위의 결정을 먼저 하세요)');
+    say(`  진열대 ${s.dim.cols}×${s.dim.rows}${nx ? ` · ${nx.day}일 차 아침 ${nx.cols}×${nx.rows}로 자동 확장` : ' · 최대 크기'}`);
   }
   if (s.phase === 'reward') {
     say('▶ 결산 보상 (`reward <키> [우선 입고할 상품 id]`):');
-    for (const k of s.rewardOffer) say(`  ${k} · ${G.REWARDS[k].name}: ${G.REWARDS[k].text}`);
+    s.rewardOffer.forEach((k, i) => say(`  ${i + 1}) ${k} · ${G.REWARDS[k].name}: ${G.REWARDS[k].text} → ${G.rewardPreview(s, k)}`));
   }
   if (s.phase === 'mainpick') {
     const opts = G.mainRewardOptions(s);
@@ -182,7 +192,8 @@ const HELP = `명령:
   upgrade <번호>         잔금(또는 이용권)으로 한 등급 올리기 · 하루 한 번, Ⅲ등급까지, 알 제외
   merge <번호|hand>      같은 상품·등급 3개 합성
   mut <A|B>              변이 고르기
-  extra / expand         추가 입고 / 진열대 확장(잔금)
+  extra                  추가 입고(잔금, 후보 셋 중 하나)
+  order <상품id>         지정 발주: 진열 중인 종류를 1등급으로 확정 입고(하루 2번)
   sign <계약id> / refuse 계약 서명 / 모두 거절
   open                   영업하고 납부 판정
   reward <키> [상품id]   결산 보상
@@ -214,10 +225,10 @@ const ACT = {
   move: (s) => G.movePiece(s, num(args[0], '번호'), num(args[1], 'x'), num(args[2], 'y'), args[3] ? num(args[3], '회전') : s.pieces.find((p) => p.uid === Number(args[0]))?.rot ?? 0),
   discard: (s) => G.discard(s, num(args[0], '번호')),
   upgrade: (s) => G.upgrade(s, num(args[0], '번호')),
+  order: (s) => G.order(s, args[0]),
   merge: (s) => G.merge(s, args[0] === 'hand' ? 'hand' : num(args[0], '번호')),
   mut: (s) => G.chooseMutation(s, (args[0] ?? '').toUpperCase()),
   extra: (s) => G.buyExtra(s),
-  expand: (s) => G.buyExpand(s),
   sign: (s) => G.sign(s, args[0]),
   refuse: (s) => G.refuseContracts(s),
   reward: (s) => G.takeReward(s, args[0], args[1] ?? null),
@@ -273,6 +284,7 @@ if (cmd === 'help') {
       fail(`${cmd} 실패: ${placeWhy(s, id, Number(x), Number(y), Number(r ?? 0))}`);
     }
     if (cmd === 'sign' && s.contractOffer?.ids.includes(args[0])) fail(`서명 불가: ${G.canSign(s, args[0]).why}`);
+    if (cmd === 'order') fail(`지정 발주 불가: ${G.orderBlocked(s, args[0]) ?? '상품 id를 확인하세요'}`);
     if (cmd === 'upgrade') {
       const p = s.pieces.find((x) => x.uid === Number(args[0]));
       const why = G.upgradeBlocked(s, p) ?? (s.pendingMutation ? '변이를 먼저 고르세요' : `잔금이 부족해요(필요 ${G.upgradeCost(s, p)})`);

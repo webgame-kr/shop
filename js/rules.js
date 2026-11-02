@@ -3,8 +3,18 @@
 // 지원 효과는 언제나 기본값과 등급만 보고 계산해서, 받은 보너스를 다른 지원이 다시 키우지 않는다.
 
 export const START_SIZE = { cols: 5, rows: 4 };
-// 진열대 확장 순서(최대 7×6)
-export const EXPAND_STEPS = [{ cols: 6, rows: 4 }, { cols: 6, rows: 5 }, { cols: 7, rows: 5 }, { cols: 7, rows: 6 }];
+// 진열대는 결산일 다음 날 아침에 자동으로 넓어진다(최대 8×7). 사는 기능은 없다.
+export const EXPAND_SCHEDULE = [
+  { day: 6, cols: 6, rows: 4 }, { day: 11, cols: 6, rows: 5 }, { day: 16, cols: 7, rows: 5 },
+  { day: 21, cols: 7, rows: 6 }, { day: 26, cols: 8, rows: 6 }, { day: 31, cols: 8, rows: 7 },
+];
+export const EXPAND_STEPS = EXPAND_SCHEDULE.map(({ cols, rows }) => ({ cols, rows }));
+export const MAX_SIZE = EXPAND_STEPS[EXPAND_STEPS.length - 1];
+export function dimForDay(d) {
+  let dim = { ...START_SIZE };
+  for (const e of EXPAND_SCHEDULE) if (d >= e.day) dim = { cols: e.cols, rows: e.rows };
+  return dim;
+}
 export const GRADE_MULT = 2.4;
 export const MAX_LIVES = 3;
 
