@@ -468,8 +468,13 @@ export function refuseContracts(s) {
 
 /* ---------- 영업과 판정 ---------- */
 
+// 계약 제안이 온 날은 서명하거나 모두 거절해야 영업을 시작할 수 있다
+export function contractPending(s) {
+  return !!s.contractOffer;
+}
+
 export function canOpen(s) {
-  return s.phase === 'arrange';
+  return s.phase === 'arrange' && !contractPending(s);
 }
 
 export function openShop(s) {

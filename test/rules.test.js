@@ -107,7 +107,7 @@ test('정상 납부하면 초과분이 잔금이 된다', () => {
 
 test('불꽃이 모두 꺼지면 끝난다', () => {
   const s = G.newGame(5);
-  for (let i = 0; i < 3; i++) { while (s.phase !== 'arrange') G.skip(s); G.openShop(s); }
+  for (let i = 0; i < 3; i++) { while (s.phase !== 'arrange') G.skip(s); G.refuseContracts(s); G.openShop(s); }
   assert.equal(s.phase, 'over');
   assert.equal(s.lives, 0);
 });
@@ -160,4 +160,18 @@ test('진열대는 정해진 크기까지만 커진다', () => {
   assert.deepEqual(s.dim, { cols: 7, rows: 6 });
   assert.equal(G.expandCost(s), null);
   assert.deepEqual(G.newGame(1).dim, START_SIZE);
+});
+
+test('계약 제안이 온 날은 서명하거나 거절해야 영업할 수 있다', () => {
+  const s = G.newGame(21);
+  s.phase = 'arrange';
+  s.contractOffer = { ids: ['goblinloan', 'accountant', 'rush'], cells: null };
+  assert.equal(G.canOpen(s), false);
+  assert.equal(G.openShop(s), null);
+  assert.equal(s.day, 1);
+  G.refuseContracts(s);
+  assert.equal(G.canOpen(s), true);
+  s.contractOffer = { ids: ['goblinloan'], cells: null };
+  assert.ok(G.sign(s, 'goblinloan'));
+  assert.equal(G.canOpen(s), true);
 });

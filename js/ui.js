@@ -166,7 +166,7 @@ function showMorning() {
   const warn = conflictText();
   let html = contractRowsHTML() + (warn ? `<p class="warn">${warn}</p>` : '');
   if (s.grace) html += `<div class="grace"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg><div><b>마왕의 유예</b>오늘 상품 후보 전체를 한 번 무료로 다시 뽑을 수 있어요. 오늘이 끝나면 사라져요.</div></div>`;
-  if (s.contractOffer) html += `<button class="offer-callout" data-go="contract"><span>📜</span><span><b>마왕의 계약 제안 ${s.contractOffer.ids.length}건</b><small>입고 전에 읽어 볼 수 있어요. 거절해도 돼요.</small></span><span>›</span></button>`;
+  if (s.contractOffer) html += `<button class="offer-callout" data-go="contract"><span>📜</span><span><b>마왕의 계약 제안 ${s.contractOffer.ids.length}건</b><small>서명하거나 모두 거절해야 오늘 영업을 시작할 수 있어요.</small></span><span>›</span></button>`;
   $('m-contracts').innerHTML = html;
   show('morning');
   S.play(G.isSettleDay(s.day) ? 'settlement_toll' : 'demon_voice', { delay: 0.2 });
@@ -600,6 +600,7 @@ function renderActions(coach) {
     label = enabled ? '여기에 놓기' : '놓을 수 없는 자리';
     if (enabled && coach === 2) main.classList.add('hl');
   } else if (sel?.kind === 'hand') label = '놓을 칸을 누르세요';
+  else if (s.phase === 'arrange' && G.contractPending(s)) { enabled = true; label = '계약을 먼저 결정하세요'; main.classList.add('hl'); }
   else if (G.canOpen(s)) { enabled = true; label = '영업 시작'; if (coach === 3) main.classList.add('hl'); }
   else if (s.phase === 'place') label = '새 상품을 놓아 주세요';
   else label = `상품 ${s.picksLeft}개를 고르면 영업 시작`;
@@ -1051,7 +1052,10 @@ function bind() {
     backFromContract();
   };
   $('btn-refuse').onclick = () => { G.refuseContracts(s); S.play('contract_reject'); save(); backFromContract(); };
-  $('btn-contract-close').onclick = backFromContract;
+  $('btn-contract-close').onclick = () => {
+    if (s.phase === 'arrange' && G.contractPending(s)) toast('오늘 영업 전에 서명하거나 모두 거절해야 해요');
+    backFromContract();
+  };
 
   $('btn-go-shelf').onclick = leaveMorning;
   $('j-extra').addEventListener('click', (e) => {
@@ -1070,7 +1074,12 @@ function bind() {
   $('btn-undo').onclick = undo;
   $('btn-skip').onclick = () => act(G.skip);
   $('btn-merge-cancel').onclick = () => { merging = null; render(); };
-  $('btn-main').onclick = () => { if (merging) confirmMerge(); else if (ghost) commit(); else openShop(); };
+  $('btn-main').onclick = () => {
+    if (merging) confirmMerge();
+    else if (ghost) commit();
+    else if (s.phase === 'arrange' && G.contractPending(s)) openContract();
+    else openShop();
+  };
   $('btn-coach-skip').onclick = () => { store.set(KEY_TUTORIAL, true); render(); };
   $('btn-menu').onclick = () => $('help').showModal();
   $('btn-new').onclick = () => {

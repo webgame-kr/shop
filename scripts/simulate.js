@@ -69,6 +69,7 @@ function play(seed, bot) {
   const rand = () => ((r = (Math.imul(r, 1664525) + 1013904223) | 0) >>> 0) / 4294967296;
   let guard = 0;
   while (s.phase !== 'over' && s.day <= MAX_DAY && guard++ < 20000) {
+    if (s.contractOffer) G.refuseContracts(s);
     if (s.phase === 'arrange' && (bot === casual || s.balance < G.extraCost(s) + 25)) { G.openShop(s); continue; }
     if (s.phase === 'reward' && bot === casual) { G.takeReward(s, s.rewardOffer[0]); continue; }
     if (s.phase === 'place') { G.skip(s); continue; }
