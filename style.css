@@ -260,7 +260,12 @@ div.cell { cursor: default; }
 .parch-panel dd { margin: 0; font-weight: 700; text-align: right; }
 .parch-panel .minus { color: var(--seal); }
 .parch-panel p { margin: 10px 0 0; font-size: 13px; color: var(--parch-soft); line-height: 1.5; }
-.merge-offer { margin-top: 10px; display: flex; align-items: center; gap: 10px; background: #3a2531; border: 1.5px solid var(--flame); border-radius: 12px; padding: 10px 12px; font-size: 13.5px; }
+/* 합성 가능 안내: 양피지 카드 위에서 눈에 띄는 밝은 금빛 띠 */
+.merge-offer { margin-top: 10px; display: flex; align-items: center; gap: 10px; background: linear-gradient(135deg, #FFE7A8, #FFC97A); color: #3a210c; border: 2px solid #F0A040; border-radius: 12px; padding: 10px 12px; font-size: 13.5px; box-shadow: 0 0 0 3px rgba(255, 178, 90, .25), 0 3px 10px rgba(240, 140, 50, .3); animation: mergeGlow 1.8s ease-in-out infinite; }
+.merge-offer b { color: #9a3b05; }
+.merge-offer .small-btn, .detail .dh .acts .merge-offer .small-btn { background: var(--flame); border-color: #d96a1f; color: #22140c; }
+@keyframes mergeGlow { 50% { box-shadow: 0 0 0 5px rgba(255, 178, 90, .38), 0 3px 14px rgba(240, 140, 50, .45); } }
+@media (prefers-reduced-motion: reduce) { .merge-offer { animation: none; } }
 .merge-offer span { flex: 1; }
 .done-line { background: var(--card); border-radius: 12px; padding: 12px 14px; font-weight: 700; color: var(--good); display: flex; gap: 8px; align-items: center; font-size: 14px; }
 .done-line svg { width: 18px; height: 18px; }
