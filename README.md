@@ -7,10 +7,10 @@
 ES 모듈을 쓰므로 `file://`이 아니라 아무 정적 서버로 연다.
 
 ```bash
-python -m http.server 3600 --directory shop
+python -m http.server 3600
 ```
 
-`http://localhost:3600`. 저장소 루트의 `.claude/launch.json`에 `small-shop`으로도 등록돼 있다.
+저장소 폴더에서 실행하고 `http://localhost:3600`으로 연다.
 
 ## 구조
 
@@ -25,8 +25,8 @@ python -m http.server 3600 --directory shop
 ## 테스트와 수치 검증
 
 ```bash
-cd shop && node --test test/
-cd shop && node scripts/simulate.js 300
+node --test test/
+node scripts/simulate.js 300
 ```
 
 등급 기준은 기획서 시험값(260/340/420)에서 320/420/520으로 올렸다. 시뮬레이션에서 아무 후보나 골라 처음 빈칸에 놓는 봇이 중앙값 323, 당장 수익만 보는 봇이 중앙값 492였기 때문이다. 실제 플레이 후 `js/rules.js`의 `GRADES`를 다시 조정한다.
