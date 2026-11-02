@@ -97,6 +97,8 @@ div.cell { cursor: default; }
   position: absolute; pointer-events: none; text-align: center; line-height: 1.15;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
 }
+.lbl .pic { position: relative; flex: none; margin-bottom: .4cqw; }
+.lbl .pic img { position: absolute; left: 50%; top: 50%; display: block; filter: drop-shadow(0 .3cqw 0 rgba(0, 0, 0, .12)); }
 .lbl .nm { font-weight: 700; font-size: 3.3cqw; white-space: nowrap; }
 .lbl .per { font-size: 2.5cqw; font-weight: 500; opacity: .8; margin-top: .3cqw; white-space: nowrap; }
 .lbl .earn { font-family: var(--jua); font-size: 5.6cqw; margin-top: .2cqw; }

@@ -1,4 +1,4 @@
-// 인스타 결과 카드(1080×1920, 디자인 시안 4번): 게임 이름, 최종 진열대, 누적 매출과 등급, 게임 주소.
+// 인스타 결과 카드(1080×1920, 디자인 시안 4번): 게임 이름, 최종 진열대(일러스트 포함), 누적 매출과 등급, 게임 주소.
 import { COLS, ROWS, ITEMS, cellsOf, sizeOf } from './rules.js';
 
 const JUA = '"Jua", "Noto Sans KR", sans-serif';
@@ -24,6 +24,12 @@ function shade(hex, k) {
 
 export async function drawCard({ pieces, total, grade, url }) {
   try { await Promise.all([document.fonts.load(`80px ${JUA}`), document.fonts.load(`700 30px ${NOTO}`)]); } catch { /* 기본 글꼴로 */ }
+  const pics = new Map(await Promise.all([...new Set(pieces.map((p) => p.id))].map((id) => new Promise((ok) => {
+    const im = new Image();
+    im.onload = () => ok([id, im]);
+    im.onerror = () => ok([id, null]);
+    im.src = `img/${id}.png`;
+  }))));
   const W = 1080, H = 1920;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -78,19 +84,41 @@ export async function drawCard({ pieces, total, grade, url }) {
       ctx.fill();
     }
     const { w, h } = sizeOf(p.id, p.rot);
-    let cx, cy;
-    if (cells.length === w * h) { cx = p.x + w / 2; cy = p.y + h / 2; }
+    let box;
+    if (cells.length === w * h) box = { x: p.x, y: p.y, w, h };
     else {
       const mx = cells.reduce((a, q) => a + q[0], 0) / cells.length;
       const my = cells.reduce((a, q) => a + q[1], 0) / cells.length;
       const [nx, ny] = cells.reduce((best, q) =>
         Math.hypot(q[0] - mx, q[1] - my) < Math.hypot(best[0] - mx, best[1] - my) ? q : best);
-      cx = nx + 0.5; cy = ny + 0.5;
+      box = { x: nx, y: ny, w: 1, h: 1 };
+    }
+    // 일러스트(화면과 같은 규칙: 길쭉한 상품을 세로로 돌리면 그림도 90도) + 이름
+    const pic = pics.get(p.id);
+    const areaW = box.w * cell - 24, areaH = Math.min(box.h * cell - 62, 250);
+    const base = sizeOf(p.id, 0);
+    const turned = base.w !== base.h && p.rot % 2 === 1;
+    const cx = bx + (box.x + box.w / 2) * cell;
+    const nameH = 30, gapY = 8;
+    let ih = 0, iw = 0;
+    if (pic) {
+      const [nw, nh] = turned ? [pic.height, pic.width] : [pic.width, pic.height];
+      const k = Math.min(areaW / nw, areaH / nh);
+      iw = nw * k; ih = nh * k;
+    }
+    const top = by + (box.y + box.h / 2) * cell - (ih + gapY + nameH) / 2 - 4;
+    if (pic) {
+      ctx.save();
+      ctx.translate(cx, top + ih / 2);
+      if (turned) ctx.rotate(Math.PI / 2);
+      const [dw, dh] = turned ? [ih, iw] : [iw, ih];
+      ctx.drawImage(pic, -dw / 2, -dh / 2, dw, dh);
+      ctx.restore();
     }
     ctx.fillStyle = it.light ? '#fff' : C.ink;
     ctx.font = `700 30px ${NOTO}`;
     ctx.textBaseline = 'middle';
-    ctx.fillText(it.name, bx + cx * cell, by + cy * cell - 4);
+    ctx.fillText(it.name, cx, top + ih + gapY + nameH / 2);
     ctx.textBaseline = 'alphabetic';
   }
 

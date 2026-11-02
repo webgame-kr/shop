@@ -126,8 +126,20 @@ function pieceHTML(p, { cls = '', sub = '', tag = '' } = {}) {
   }
   const b = labelBox(p);
   html += `<div class="lbl" style="left:${pct(b.x, COLS)}%;top:${pct(b.y, ROWS)}%;width:${pct(b.w, COLS)}%;height:${pct(b.h, ROWS)}%">` +
-    `<span class="nm">${it.name}</span>${sub}${tag}</div></div>`;
+    `${picHTML(p, b)}<span class="nm">${it.name}</span>${sub}${tag}</div></div>`;
   return html;
+}
+
+// 이름표 위에 들어갈 일러스트. 길쭉한 상품을 세로로 돌리면 그림도 90도 돌린다.
+function picHTML(p, b) {
+  const cell = 100 / COLS; // cqw
+  const w = b.w * cell - 2.5;
+  const h = Math.min(b.h * cell - 9.5, 20);
+  const base = sizeOf(p.id, 0);
+  const turned = base.w !== base.h && p.rot % 2 === 1;
+  const [mw, mh] = turned ? [h, w] : [w, h];
+  return `<span class="pic" style="width:${w}cqw;height:${h}cqw">` +
+    `<img src="${img(p.id)}" alt="" style="max-width:${mw}cqw;max-height:${mh}cqw;transform:translate(-50%,-50%)${turned ? ' rotate(90deg)' : ''}"></span>`;
 }
 
 function cellsHTML(interactive, ok = null) {
