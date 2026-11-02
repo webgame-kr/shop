@@ -736,6 +736,7 @@ function sellExpired(s) {
     const v = sellValue(p);
     s.balance += v;
     s.storageSold.push({ id: p.id, name: displayName(p), g: p.g, value: v });
+    s.storageSoldTotal = (s.storageSoldTotal ?? 0) + 1; // 지표용
   }
   s.storage = (s.storage ?? []).filter((q) => q.left > 0);
 }

@@ -1,5 +1,6 @@
 // 납부액 곡선 검증: 여러 시드에서 봇으로 끝까지 돌려 생존 일수 분포를 본다.
 //   node scripts/simulate.js [판 수] [casual|greedy]
+//   STORAGE=0 이면 greedy 봇이 창고를 쓰지 않는다(창고 있음/없음 비교용)
 import { canPlace, cellsOf, shapeOf, ITEMS } from '../js/rules.js';
 import * as G from '../js/game.js';
 
@@ -8,6 +9,8 @@ const only = process.argv[3] ?? null;
 // 곡선 실험: PAY=a,b,c 로 납부액 계수를 바꿔 본다
 if (process.env.PAY) [G.PAY.a, G.PAY.b, G.PAY.c] = process.env.PAY.split(',').map(Number);
 const MAX_DAY = 80;
+const USE_STORAGE = process.env.STORAGE !== '0';
+const stored = { put: 0, merged: 0, out: 0, sold: 0 };
 
 function spots(s, id, g) {
   const out = [];
@@ -62,6 +65,7 @@ function greedy(s) {
     return;
   }
   if (s.contractOffer) G.refuseContracts(s);
+  if (USE_STORAGE && useStorage(s)) return;
   // 빈칸이 적으면 합성
   for (const p of s.pieces.slice()) {
     const free = s.dim.cols * s.dim.rows - s.pieces.reduce((a, q) => a + ITEMS[q.id].cells.length, 0);
@@ -76,6 +80,18 @@ function greedy(s) {
       }
     });
     if (!best) {
+      // 창고: 자리가 없을 때, 진열대·창고에 같은 Ⅰ등급이 하나 있는 후보는 받아서 창고에 모은다
+      if (USE_STORAGE && G.storageFree(s) > 0) {
+        const have = (id) => [...s.pieces, ...s.storage].filter((p) => p.id === id && p.g === s.offerGrade && !(ITEMS[id].egg && (p.grow ?? 0) < 2)).length;
+        const i = s.offers.findIndex(({ id }) => have(id) >= 2 || (have(id) === 1 && !ITEMS[id].egg));
+        if (i >= 0) {
+          G.choose(s, i);
+          if (G.mergePlan(s, 'hand')) { G.merge(s, 'hand'); stored.merged++; const sp = spots(s, s.hand.id, s.hand.g)[0]; if (sp) G.placeHand(s, sp.x, sp.y, sp.rot); else if (G.store(s, 'hand')) stored.put++; else G.skip(s); }
+          else if (G.store(s, 'hand')) stored.put++;
+          else G.skip(s);
+          return;
+        }
+      }
       // 합성 재료가 되면 받아서 합성
       const i = s.offers.findIndex(({ id }) => s.pieces.filter((p) => p.id === id && p.g === s.offerGrade).length >= 2);
       if (i >= 0) { G.choose(s, i); G.merge(s, 'hand'); const sp = spots(s, s.hand.id, s.hand.g)[0]; if (sp) G.placeHand(s, sp.x, sp.y, sp.rot); else G.skip(s); }
@@ -110,6 +126,25 @@ function greedy(s) {
     if (best && G.upgrade(s, best.p.uid)) return;
   }
   if (s.phase === 'arrange' && s.balance >= G.extraCost(s) + 25) { G.buyExtra(s); return; }
+}
+
+// 창고 운영: 창고 상품으로 합성할 수 있으면 합성, 자리가 생기면 매출이 가장 좋은 곳에 꺼내기,
+// 내일 아침 팔릴 상품은 꺼낼 수 없으면 그냥 두어 자동 판매되게 한다. 무언가 했으면 true.
+function useStorage(s) {
+  if (!s.storage?.length || s.phase === 'place' || s.pendingMutation) return false;
+  for (const p of s.storage) {
+    const plan = G.mergePlan(s, { stored: p.uid });
+    if (plan && !plan.blocked && G.merge(s, { stored: p.uid })) { stored.merged++; return true; }
+  }
+  for (const p of s.storage) {
+    let best = null;
+    for (const sp of nearSpots(s, p.id, p.g)) {
+      const v = G.income(s, [...s.pieces, { ...p, ...sp, uid: -9 }]).sum.total;
+      if (!best || v > best.v) best = { v, sp };
+    }
+    if (best && G.unstore(s, p.uid, best.sp.x, best.sp.y, best.sp.rot)) { stored.out++; return true; }
+  }
+  return false;
 }
 
 const CATS6 = ['alch', 'gear', 'magic', 'food', 'treasure', 'beast'];
@@ -160,6 +195,7 @@ for (const [name, bot] of [['casual', casual], ['greedy', greedy]].filter(([n]) 
   const rewards = {};
   for (const g of games) for (const h of g.rewardLog ?? []) rewards[h] = (rewards[h] ?? 0) + 1;
   console.log(`  첫 불꽃 손실(중앙) ${med(games.map((g) => g.metrics.firstLoss))}일 · 영업 뒤 잔금 평균 ${avg(games.flatMap((g) => g.metrics.balance))} · 영업 때 빈칸 평균 ${avg(games.flatMap((g) => g.metrics.empty))}`);
+  if (bot === greedy) console.log(`  창고(${USE_STORAGE ? '사용' : '안 씀'}): 넣기 ${stored.put} · 창고 재료 합성 ${stored.merged} · 꺼내기 ${stored.out} · 기한 만료 판매 ${games.reduce((a, g) => a + (g.storageSoldTotal ?? 0), 0)}건 (${runs}판 합계)`);
   console.log(`  판당 합성 ${avg(games.map((g) => g.mergeCount))} · 지정 발주 ${avg(games.map((g) => g.orders ?? 0))} · 등급 올리기 ${avg(games.map((g) => g.upgrades ?? 0))} · 최대 확장(31일) 뒤 생존 ${games.filter((g) => g.day > 31).length}판, 평균 ${avg(games.filter((g) => g.day > 31).map((g) => g.day - 31))}일`);
   console.log(`  결산 보상 선택 ${Object.entries(rewards).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ') || '없음'}`);
 }
