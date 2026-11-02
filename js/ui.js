@@ -5,6 +5,7 @@ import {
 } from './rules.js';
 import * as G from './game.js';
 import { drawCard } from './card.js';
+import * as S from './sound.js';
 
 const KEY_RUN = 'small-shop:run';
 const KEY_BEST = 'small-shop:best';
@@ -230,6 +231,8 @@ function commit() {
   }
   if (!ok) return false;
   markSparks(before);
+  S.play('item_place');
+  if (spark.size) S.play('combo_spark', { delay: 0.12 });
   press = uid;
   select(null);
   save();
@@ -413,7 +416,8 @@ function renderPanel(ev, prevEv, coach) {
     const cards = s.offers.map((id, i) => {
       const it = ITEMS[id];
       const hl = coach === 1 && id === 'bread' ? ' hl' : '';
-      return `<button class="offer${hl}" data-offer="${i}">${miniShape(id)}
+      return `<button class="offer${hl}" data-offer="${i}">
+        <span class="pic"><img src="${img(id)}" alt=""></span>${miniShape(id, 0, 10)}
         <span class="nm">${it.name}</span><span class="meta">${it.size} · 기본 ${it.base}</span>
         <span class="eff">${it.effect}</span></button>`;
     }).join('');
@@ -471,6 +475,7 @@ function openShop() {
   const from = s.total;
   const last = G.openShop(s);
   if (!last) return;
+  S.play('open_shop');
   if (!tutorialDone()) store.set(KEY_TUTORIAL, true);
   save();
   let base = 0;
@@ -498,6 +503,8 @@ function showSettle() {
     `<div><b>${i + 1} ${ITEMS[p.id].name}</b>${r.base}${r.bonuses.map((b) => ` + ${b.label} ${b.amount}`).join('')}</div>`).join('');
   $('btn-settle-next').textContent = s.phase === 'over' ? '결과 보기' : `${s.day}일 차로 넘어가기`;
   show('settle');
+  st.pieces.slice(0, 16).forEach((_, i) => S.play('coin_tick', { delay: 0.35 + i * 0.06, rate: 1 + Math.min(i, 10) * 0.03 }));
+  S.play('day_total', { delay: 0.45 + Math.min(st.pieces.length, 16) * 0.06 });
   const t0 = performance.now();
   const step = (t) => {
     if (settling !== st) return;
@@ -519,6 +526,7 @@ function finishSettle() {
 
 function showResult() {
   // 결과 확정은 한 번만: 최고 기록 갱신 여부를 상태에 남긴다
+  const fresh = !s.final;
   if (!s.final) {
     const prevBest = bestRecord();
     const isNew = !prevBest || s.total > prevBest.total;
@@ -526,6 +534,7 @@ function showResult() {
     s.final = { isNew, prevBest: prevBest?.total ?? null };
     save();
   }
+  if (fresh) S.play('grade_reveal');
   const sum = G.summary(s);
   $('result-total').textContent = s.total;
   $('result-grade').textContent = sum.grade.name;
@@ -536,6 +545,7 @@ function showResult() {
     badge.textContent = s.final.prevBest === null ? '첫 기록' : `최고 기록 갱신 · 이전 ${s.final.prevBest}`;
     badge.classList.add('new');
     celebrate();
+    if (fresh) S.play('new_record', { delay: 1.2 });
   } else {
     badge.textContent = `개인 최고 ${bestRecord()?.total ?? s.total}`;
     badge.style.background = 'var(--muted)';
@@ -615,7 +625,7 @@ function onTap(x, y) {
   }
   if (ghost && inPiece(ghostPiece(), x, y)) {
     if (ghostValid()) commit();
-    else toast('다른 상품과 겹쳐서 놓을 수 없어요');
+    else { S.play('place_invalid'); toast('다른 상품과 겹쳐서 놓을 수 없어요'); }
     return;
   }
   if (sel.kind === 'piece' && !ghost) {
@@ -669,11 +679,12 @@ function onPointerUp() {
   if (!d.moved) return onTap(d.cell.x, d.cell.y);
   if (d.dead) return;
   if (ghostValid()) commit();
-  else render();
+  else { S.play('place_invalid'); render(); }
 }
 
 function rotate() {
   if (!sel) return;
+  S.play('item_rotate');
   if (sel.kind === 'hand' && !ghost) {
     handRot = (handRot + 1) % 4;
     s.hand.rot = handRot;
@@ -690,6 +701,7 @@ function discardSelected() {
   if (sel?.kind !== 'piece') return;
   const p = selectedPiece();
   G.discard(s, p.uid);
+  S.play('discard');
   select(null);
   save();
   render();
@@ -705,6 +717,7 @@ function skip() {
 
 function undo() {
   if (G.undo(s)) {
+    S.play('undo');
     resetSelection();
     save();
     render();
@@ -737,6 +750,7 @@ function bind() {
     const offer = e.target.closest('[data-offer]');
     if (offer) {
       G.choose(s, +offer.dataset.offer);
+      S.play('item_pick');
       select({ kind: 'hand' });
       save();
       return render();
@@ -766,6 +780,32 @@ function bind() {
   $('btn-result-home').onclick = goStart;
   $('btn-card').onclick = saveCard;
   document.querySelectorAll('[data-open-help]').forEach((b) => { b.onclick = () => $('help').showModal(); });
+
+  // 소리: 시작 화면 버튼은 둘 다 켜고 끈다. 도움말에서는 따로.
+  const syncSound = () => {
+    const any = S.isOn('sfx') || S.isOn('bgm');
+    $('btn-sound').setAttribute('aria-pressed', String(any));
+    $('btn-sound').setAttribute('aria-label', any ? '소리 끄기' : '소리 켜기');
+    $('opt-sfx').checked = S.isOn('sfx');
+    $('opt-bgm').checked = S.isOn('bgm');
+  };
+  $('btn-sound').onclick = () => {
+    const on = !(S.isOn('sfx') || S.isOn('bgm'));
+    S.setOn('sfx', on);
+    S.setOn('bgm', on);
+    if (on) S.play('ui_tap');
+    syncSound();
+  };
+  $('opt-sfx').onchange = (e) => { S.setOn('sfx', e.target.checked); if (e.target.checked) S.play('ui_tap'); syncSound(); };
+  $('opt-bgm').onchange = (e) => { S.setOn('bgm', e.target.checked); syncSound(); };
+  syncSound();
+  // 따로 소리가 없는 버튼은 가벼운 탭 소리
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('button, a.btn');
+    if (!b || b.disabled) return;
+    if (b.matches('.cell, .offer, #btn-rotate, #btn-undo, #btn-main, #btn-sound, [data-act="discard"]')) return;
+    S.play('ui_tap');
+  }, true);
 
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('dialog[open]')) return;
@@ -797,6 +837,7 @@ const SAMPLE = [
 ].map(([id, x, y, rot], i) => ({ uid: i + 1, id, x, y, rot }));
 
 fillHelp();
+S.init();
 bind();
 staticBoard($('start-board'), SAMPLE);
 goStart();

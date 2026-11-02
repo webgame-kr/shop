@@ -30,7 +30,13 @@
         <p>어울리는 상품끼리 <b>붙여 놓으면</b> 보너스 수익.</p>
         <p>시간제한 없어요. 8일 뒤 누적 매출로 등급이 정해져요.</p>
       </div>
-      <div class="start-foot"><button class="link green" data-open-help>규칙 · 도움말</button></div>
+      <div class="start-foot">
+        <button class="round sound-btn" id="btn-sound" aria-pressed="false" aria-label="소리 켜기">
+          <svg class="off" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l4 6M21 9l-4 6"/></svg>
+          <svg class="on" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 8.5a5 5 0 0 1 0 7M19.5 6a8.5 8.5 0 0 1 0 12"/></svg>
+        </button>
+        <button class="link green" data-open-help>규칙 · 도움말</button>
+      </div>
     </section>
 
     <!-- 플레이 -->
@@ -98,6 +104,11 @@
   <dialog id="help" class="sheet">
     <form method="dialog"><button class="round close" aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></form>
     <h2>규칙 · 도움말</h2>
+    <div class="toggles">
+      <label class="toggle"><span>효과음</span><input type="checkbox" id="opt-sfx"><i></i></label>
+      <label class="toggle"><span>배경음악</span><input type="checkbox" id="opt-bgm"><i></i></label>
+    </div>
+    <p class="fine">소리는 처음에 꺼져 있어요. 소리가 없어도 모든 정보는 화면에 보여요.</p>
     <ul class="help-rules">
       <li>한 판은 8일. 매일 후보 3개 중 하나를 골라 놓고, 한 번 더 고른 뒤 영업을 시작해요.</li>
       <li><b>상품 누르기 → 놓을 칸 누르기 → 미리보기 확인 → 여기에 놓기.</b> 미리보기를 한 번 더 눌러도 놓여요. 끌어서 옮길 수도 있어요.</li>
