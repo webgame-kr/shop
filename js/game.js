@@ -344,7 +344,7 @@ export function income(s, pieces = s.pieces) {
 
 export function newGame(seed = (Math.random() * 2 ** 32) >>> 0, startCat = 'alch') {
   const s = {
-    v: 5, seed, rng: seed | 0, startCat,
+    v: 6, seed, rng: seed | 0, startCat,
     day: 1, lives: MAX_LIVES, phase: 'pick',
     dim: { ...START_SIZE }, expand: 0,
     pieces: [], nextUid: 1,
@@ -354,7 +354,7 @@ export function newGame(seed = (Math.random() * 2 ** 32) >>> 0, startCat = 'alch
     perma: Object.fromEntries(CAT_IDS.map((c) => [c, 0])), catBoost: {},
     mutations: {}, pendingMutation: null,
     favor: {}, regulars: [], regularOffer: null, main: null, everMain: false,
-    priority: null, tickets: 0, freeTickets: 0, mergeCount: 0, bonusPick: null, recentCats: [], recentContracts: [], doneContracts: [], upTickets: 0, upgrades: 0, orderTickets: 0, ordersToday: 0, ordering: false, orders: 0, lastExpand: null, rewardCash: 0,
+    priority: null, tickets: 0, freeTickets: 0, mergeCount: 0, bonusPick: null, recentCats: [], recentContracts: [], doneContracts: [], upTickets: 0, upgrades: 0, orderTickets: 0, ordersToday: 0, ordering: false, orders: 0, lastExpand: null, rewardCash: 0, storage: [], storageSlots: STORAGE_START, storageSold: [],
     grace: false, rerolls: 0, extras: 0, bonusGradeNext: false, forfeitReward: false,
     rewardOffer: null, undo: [], last: null, final: null, briefSeen: false,
   };
@@ -364,6 +364,7 @@ export function newGame(seed = (Math.random() * 2 ** 32) >>> 0, startCat = 'alch
 
 function startDay(s) {
   applyExpansion(s);
+  sellExpired(s);
   s.ordersToday = 0;
   s.ordering = false;
   s.picksLeft = PICKS_PER_DAY;
@@ -387,9 +388,10 @@ export function seeBrief(s) { s.briefSeen = true; }
 
 // 이전 형식(v4) 진행 중 판: 새 필드를 채우고, 진열대는 줄이지 않고 일정 크기와 비교해 큰 쪽(가로·세로 각각)을 쓴다
 export function migrate(s) {
-  if (!s || s.v === 5) return s;
+  if (!s) return s;
+  if (s.v === 5 || s.v === 6) { s.storage ??= []; s.storageSlots ??= STORAGE_START; s.storageSold ??= []; s.v = 6; return s; }
   if (s.v !== 4) return null;
-  Object.assign(s, { v: 5, orderTickets: 0, ordersToday: 0, ordering: false, orders: 0, lastExpand: null, rewardCash: 0 });
+  Object.assign(s, { v: 6, orderTickets: 0, ordersToday: 0, ordering: false, orders: 0, lastExpand: null, rewardCash: 0, storage: [], storageSlots: STORAGE_START, storageSold: [] });
   s.recentContracts ??= []; s.doneContracts ??= []; s.upTickets ??= 0; s.upgrades ??= 0;
   for (const c of CAT_IDS) s.perma[c] ??= 0;
   const want = dimForDay(s.day);
@@ -665,6 +667,79 @@ export function sellValue(p) {
   return isEgg(p) ? ITEMS[p.id].egg.base : Math.max(1, Math.round(gradeBase(p.id, p.g) * 1.5));
 }
 
+/* ---------- 창고 ---------- */
+
+// 매출에 들어가지 않는 임시 보관 칸. 기본 2칸(결산 보상으로 최대 3칸), 넣은 날 영업부터 3번 보관.
+// 창고 상품은 s.pieces에 없으므로 매출·손님·호감·계약·주변 효과·마수 성장에서 저절로 빠진다.
+export const STORAGE_START = 2;
+export const STORAGE_MAX = 3;
+export const STORAGE_DAYS = 3;
+export const storageFree = (s) => (s.storageSlots ?? STORAGE_START) - (s.storage?.length ?? 0);
+export function storeBlocked(s, uid) {
+  if (!prep(s)) return '지금은 창고를 쓸 수 없어요';
+  if (s.pendingMutation) return '변이를 먼저 골라 주세요';
+  if (uid !== 'hand' && !s.pieces.some((p) => p.uid === uid)) return '진열대 상품이 아니에요';
+  if (uid === 'hand' && !(s.phase === 'place' && s.hand)) return '손에 든 상품이 없어요';
+  if (storageFree(s) <= 0) return '창고 가득 참';
+  return null;
+}
+// 같은 날 꺼냈다 다시 넣으면 처음 기한을 이어 쓴다(꺼냈다 넣기로 기한을 늘릴 수 없다)
+function storageLeft(s, p) {
+  return p.out?.day === s.day ? p.out.left : STORAGE_DAYS;
+}
+export function store(s, uid) {
+  if (storeBlocked(s, uid)) return false;
+  snapshot(s);
+  if (uid === 'hand') {
+    const p = { uid: s.nextUid++, ...s.hand, x: null, y: null };
+    s.storage.push({ ...p, left: STORAGE_DAYS, since: s.day });
+    afterPick(s);
+    return true;
+  }
+  const p = s.pieces.find((q) => q.uid === uid);
+  s.pieces = s.pieces.filter((q) => q.uid !== uid);
+  const { out, ...rest } = p;
+  s.storage.push({ ...rest, left: storageLeft(s, p), since: out?.day === s.day ? out.since : s.day });
+  return true;
+}
+export function unstoreBlocked(s, uid, x, y, rot) {
+  if (!prep(s) || s.phase === 'place') return s.phase === 'place' ? '손에 든 상품을 먼저 처리해 주세요' : '지금은 꺼낼 수 없어요';
+  const p = s.storage?.find((q) => q.uid === uid);
+  if (!p) return '창고에 없는 상품이에요';
+  if (x == null) return anyFit(s.dim, s.pieces, p.id, sealedNow(s)) ? null : '놓을 자리 없음';
+  return canPlace(s.dim, s.pieces, { ...p, x, y, rot: ((rot % 4) + 4) % 4 }, undefined, sealedNow(s)) ? null : '놓을 수 없는 자리';
+}
+export function unstore(s, uid, x, y, rot = 0) {
+  if (unstoreBlocked(s, uid, x, y, rot)) return false;
+  snapshot(s);
+  const p = s.storage.find((q) => q.uid === uid);
+  s.storage = s.storage.filter((q) => q.uid !== uid);
+  const { left, since, ...rest } = p;
+  s.pieces.push({ ...rest, x, y, rot: ((rot % 4) + 4) % 4, out: { day: s.day, left, since } });
+  return true;
+}
+export function sellStored(s, uid) {
+  const p = s.storage?.find((q) => q.uid === uid);
+  if (!prep(s) || !p) return false;
+  snapshot(s);
+  s.storage = s.storage.filter((q) => q.uid !== uid);
+  s.balance += sellValue(p);
+  return true;
+}
+// 영업이 끝날 때 기한을 하나 줄이고, 0이 된 상품은 다음 날 아침에 판다
+function tickStorage(s) {
+  for (const p of s.storage ?? []) p.left = Math.max(0, p.left - 1);
+}
+function sellExpired(s) {
+  s.storageSold = [];
+  for (const p of (s.storage ?? []).filter((q) => q.left <= 0)) {
+    const v = sellValue(p);
+    s.balance += v;
+    s.storageSold.push({ id: p.id, name: displayName(p), g: p.g, value: v });
+  }
+  s.storage = (s.storage ?? []).filter((q) => q.left > 0);
+}
+
 /* ---------- 같은 크기 상품끼리 자리 바꾸기 ---------- */
 
 // a가 b의 칸을 그대로 차지하게 하는 회전(지금 회전을 먼저 본다). 안 되면 null.
@@ -734,22 +809,48 @@ function prep(s) {
 
 /* ---------- 합성과 변이 ---------- */
 
+// target: 진열대 상품 uid, 'hand', 또는 { stored: uid }(창고 상품). 창고 상품도 재료가 된다(창고 것을 먼저 쓴다).
 export function mergePlan(s, target) {
   if (!prep(s) || s.pendingMutation) return null;
   const handPiece = s.hand && s.phase === 'place' ? { uid: -1, ...s.hand, x: null, y: null } : null;
-  const t = target === 'hand' ? handPiece : s.pieces.find((p) => p.uid === target);
+  const stored = (s.storage ?? []).map((p) => ({ ...p, x: null, y: null, inStore: true }));
+  const fromStore = typeof target === 'object' && target !== null;
+  const t = target === 'hand' ? handPiece : fromStore ? stored.find((p) => p.uid === target.stored) : s.pieces.find((p) => p.uid === target);
   if (!t) return null;
-  const set = mergeSet(s.pieces, t, handPiece && target !== 'hand' ? [handPiece] : []);
-  return set ? { target: t, set, g: t.g + 1 } : null;
+  const set = mergeSet(s.pieces, t, [...(handPiece && target !== 'hand' ? [handPiece] : []), ...stored.filter((p) => p.uid !== t.uid)]);
+  if (!set) return null;
+  const plan = { target: t, set, g: t.g + 1 };
+  if (fromStore) {
+    // 결과는 진열대에: 진열대 재료가 있으면 그 자리, 모두 창고면 빈자리
+    const board = set.find((q) => !q.inStore && q.uid !== -1);
+    if (board) plan.anchor = { uid: board.uid };
+    else {
+      const at = findSpot(s.dim, s.pieces, t.id, sealedNow(s));
+      if (!at) return { ...plan, blocked: '합성 결과를 놓을 진열대 자리가 없어요' };
+      plan.anchor = { spot: at };
+    }
+  }
+  return plan;
 }
 
 export function merge(s, target) {
   const plan = mergePlan(s, target);
-  if (!plan) return false;
+  if (!plan || plan.blocked) return false;
   snapshot(s);
   const used = new Set(plan.set.map((q) => q.uid));
   s.mergeCount++;
-  if (target === 'hand') {
+  s.storage = (s.storage ?? []).filter((p) => !used.has(p.uid));
+  if (plan.anchor) {
+    if (plan.anchor.uid != null) {
+      const keep = s.pieces.find((p) => p.uid === plan.anchor.uid);
+      s.pieces = s.pieces.filter((p) => p.uid === keep.uid || !used.has(p.uid));
+      keep.g = plan.g;
+    } else {
+      s.pieces = s.pieces.filter((p) => !used.has(p.uid));
+      const { inStore, left, since, ...t } = plan.target;
+      s.pieces.push({ ...t, ...plan.anchor.spot, g: plan.g });
+    }
+  } else if (target === 'hand') {
     s.pieces = s.pieces.filter((p) => !used.has(p.uid));
     s.hand.g = plan.g;
   } else {
@@ -1095,6 +1196,7 @@ export function openShop(s) {
     s.phase = 'over';
     return s.last;
   }
+  tickStorage(s);
   if (!ok) s.grace = true;
   if (settle && ok) {
     if (s.forfeitReward) { s.forfeitReward = false; s.last.forfeited = true; }
@@ -1140,6 +1242,7 @@ export const REWARDS = {
   ...Object.fromEntries(CAT_IDS.map((c) => [`perma_${c}`, { name: `${CATS[c].name} 분야 강화`, text: `이번 판 동안 ${CATS[c].name} 상품마다 매일 +2(반복 선택하면 누적)` }])),
   grade: { name: '중급 입고', text: '내일 첫 입고 후보가 모두 Ⅱ등급' },
   order: { name: '지정 발주권', text: '지정 발주 한 번을 무료로(하루 두 번 제한에는 포함, 최대 2장)' },
+  storage: { name: '창고 확장', text: '창고가 한 칸 늘어요(최대 3칸)' },
   upgrade: { name: '등급 올리기 이용권', text: '진열 중인 상품 하나를 잔금 없이 한 등급 올려요(알 제외, Ⅲ등급까지)' },
   life: { name: '영혼의 불꽃 회복', text: '꺼진 불꽃 하나를 다시 밝혀요' },
   cash: { name: '마왕의 팁', text: '잔금 지원(그날 지정 발주 한 번 값)' },
@@ -1167,6 +1270,7 @@ function drawRewards(s) {
   const growth = ['grade'];
   if ((s.orderTickets ?? 0) < MAX_ORDER_TICKETS) growth.push('order');
   if (s.pieces.some((p) => !isEgg(p) && p.g < UPGRADE_MAX)) growth.push('upgrade');
+  if ((s.storageSlots ?? STORAGE_START) < STORAGE_MAX) growth.push('storage');
   const slot2 = one(growth);
   const slot3 = s.lives < MAX_LIVES && rand(s) < 0.6 ? 'life' : 'cash';
   s.rewardCash = orderBaseCost(s);
@@ -1186,6 +1290,7 @@ export function rewardPreview(s, key) {
     case 'cash': return `잔금 +${s.rewardCash || orderBaseCost(s)}`;
     case 'order': return `보유 ${s.orderTickets ?? 0} → ${(s.orderTickets ?? 0) + 1}장 · 지금 값으로 ${orderBaseCost(s)} 아낌`;
     case 'upgrade': return `보유 ${s.upTickets ?? 0} → ${(s.upTickets ?? 0) + 1}장`;
+    case 'storage': return `창고 ${s.storageSlots ?? STORAGE_START} → ${(s.storageSlots ?? STORAGE_START) + 1}칸`;
     case 'life': return `불꽃 ${s.lives} → ${s.lives + 1}`;
     case 'grade': return '내일 첫 입고 후보 셋이 Ⅱ등급';
     case 'priority': return s.priority ? `지금 지정: ${ITEMS[s.priority].name}` : '아직 지정한 상품 없음';
@@ -1204,6 +1309,7 @@ export function takeReward(s, key, arg = null) {
   if (key === 'grade') s.bonusGradeNext = true;
   if (key === 'life') s.lives = Math.min(MAX_LIVES, s.lives + 1);
   if (key === 'cash') s.balance += s.rewardCash || orderBaseCost(s);
+  if (key === 'storage') s.storageSlots = Math.min(STORAGE_MAX, (s.storageSlots ?? STORAGE_START) + 1);
   if (key === 'upgrade') s.upTickets = (s.upTickets ?? 0) + 1;
   s.rewardOffer = null;
   s.rewardLog = [...(s.rewardLog ?? []), key]; // 어떤 보상을 골랐는지(지표용)

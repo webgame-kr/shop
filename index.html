@@ -84,15 +84,17 @@
         <button class="strip-head" id="strip-head" aria-expanded="false"><span id="strip-sum"></span><span class="strip-tog"><span id="strip-word">펼치기</span> <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span></button>
         <div class="chips" id="p-chips" hidden></div>
       </div>
-      <div class="shelf-tools"><button class="zoom-btn tidy-btn" id="btn-tidy" hidden>✋ 진열대 정리</button><button class="zoom-btn" id="btn-zoom" hidden>확대 보기</button></div>
+      <div class="shelf-tools"><button class="zoom-btn" id="btn-zoom" hidden>확대 보기</button></div>
       <div class="shelf"><div class="board" id="board"></div></div>
+      <div class="store-row" id="store-row"></div>
+      <div class="seg" id="seg" hidden><button data-seg="pick">입고 후보 <em id="seg-left"></em></button><button data-seg="tidy">진열대 정리</button></div>
       <p class="zoom-hint" id="zoom-hint" hidden>확대 보기 · 손가락으로 밀어 이동 · 끌어서 옮기기는 꺼져요(누르고 [여기에 놓기])</p>
       <div id="panel" class="panel" aria-live="polite"></div>
       <nav class="actions" id="p-actions">
         <button class="sq" id="btn-rotate" aria-label="회전"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg></button>
         <button class="sq" id="btn-undo" aria-label="되돌리기"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
         <button class="sq" id="btn-skip" aria-label="이번 입고 넘기기 · 잔금 조금 받음"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
-        <button class="btn outline main" id="btn-merge-cancel" hidden>합성 취소</button>
+        <button class="btn outline main" id="btn-merge-cancel" hidden>취소</button>
         <button class="btn outline main reroll" id="btn-reroll" hidden></button>
         <button class="btn primary main" id="btn-main"></button>
       </nav>

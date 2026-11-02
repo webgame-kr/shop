@@ -338,7 +338,7 @@ test('진열대는 결산일 다음 날 자동으로 넓어진다(최대 8×7), 
   const old = { ...G.newGame(2), v: 4, day: 12, dim: { cols: 7, rows: 4 } };
   delete old.orderTickets;
   const m = G.migrate(old);
-  assert.equal(m.v, 5);
+  assert.equal(m.v, 6);
   assert.deepEqual(m.dim, { cols: 7, rows: 5 });
 });
 
@@ -406,7 +406,7 @@ test('결산 보상: 세 자리 역할, 여섯 분야 강화, 낭비 방지, 잔
       const r = G.__drawRewards(s);
       assert.equal(new Set(r).size, 3);
       assert.ok(r[0] === 'priority' || r[0] === `perma_${cat}`, r[0]);
-      assert.ok(['grade', 'order', 'upgrade'].includes(r[1]));
+      assert.ok(['grade', 'order', 'upgrade', 'storage'].includes(r[1]));
       assert.equal(r[2], 'cash');           // 불꽃이 가득하면 회복은 나오지 않는다
     }
   }
@@ -550,4 +550,82 @@ test('같은 크기 상품끼리 자리 바꾸기: 가로·세로 2칸은 회전
   assert.equal(t.phase, 'pick');
   assert.ok(G.swapPieces(t, t.pieces[0].uid, t.pieces[1].uid));
   assert.ok(G.movePiece(t, t.pieces[0].uid, 3, 3, 0));
+});
+
+test('창고: 매출·조건에서 빠지고, 성장 멈춤, 3번 영업 뒤 다음 날 아침 자동 판매, 같은 날 다시 넣어도 기한 그대로, 합성 재료', () => {
+  const s = arrange(60);
+  s.day = 7;
+  s.customers = Array(30).fill('keeper');
+  s.pieces = [P('potion', 0, 0), P('potion', 1, 0), { ...P('wyvern', 0, 1), grow: 1 }, P('lavabread', 2, 1)];
+  const [p1, p2, egg] = s.pieces;
+  const before = G.income(s).sum.total;
+  assert.ok(G.store(s, egg.uid));
+  assert.equal(s.storage.length, 1);
+  assert.ok(G.income(s).sum.total < before);          // 매출·손님 보너스에서 빠진다
+  assert.equal(G.guestCondMet(s, 'keeper'), false);   // 호감 조건에서도 빠진다
+  assert.equal(G.storageFree(s), 1);
+  assert.ok(G.store(s, p2.uid));
+  assert.equal(G.storeBlocked(s, p1.uid), '창고 가득 참');
+  // 같은 날 꺼냈다 다시 넣어도 기한은 그대로
+  assert.ok(G.unstore(s, p2.uid, 4, 3, 0));
+  s.storage.find((q) => q.uid === egg.uid).left = 2;
+  assert.ok(G.store(s, p2.uid));
+  assert.equal(s.storage.find((q) => q.uid === p2.uid).left, 3);
+  const u = s.pieces.length;
+  // 합성: 진열대 1개 + 창고 1개 + 손에 든 것 대신, 진열대 potion을 대상으로 창고 potion과 진열대 potion
+  s.pieces.push(P('potion', 3, 3));
+  const plan = G.mergePlan(s, p1.uid);
+  assert.ok(plan && plan.set.some((q) => q.inStore));
+  assert.ok(G.merge(s, p1.uid));
+  assert.equal(s.pieces.find((q) => q.uid === p1.uid).g, 2);
+  assert.ok(!s.storage.some((q) => q.uid === p2.uid));
+  G.chooseMutation(s, 'A');
+  // 영업 세 번이 지나면 다음 날 아침 팔린다, 마수 성장은 멈춘다
+  for (let i = 0; i < 3; i++) {
+    s.phase = 'arrange'; s.contractOffer = null; s.regularOffer = null; s.lives = 3;
+    const left = s.storage.find((q) => q.uid === egg.uid)?.left;
+    G.openShop(s);
+    if (s.phase === 'reward' || s.phase === 'mainpick') { s.phase = 'arrange'; G.__startDay(s); }
+    if (left === 1) break;
+  }
+  assert.ok(!s.storage.some((q) => q.uid === egg.uid));
+  assert.equal(s.storageSold[0].name, '와이번 알');
+  assert.equal(s.storageSold[0].value, G.sellValue({ ...egg, grow: 1 }));
+  // 창고 상품을 대상으로 한 합성: 결과는 진열대 재료 자리에
+  const t = arrange(61);
+  t.pieces = [P('herb', 0, 0)];
+  t.balance = 0;
+  assert.ok(G.store(t, t.pieces[0].uid));
+  t.pieces = [P('herb', 2, 2)];
+  t.storage.push({ ...P('herb', null, null), left: 3, since: t.day });
+  const sid = t.storage[0].uid;
+  const pl = G.mergePlan(t, { stored: sid });
+  assert.ok(pl && pl.anchor);
+  assert.ok(G.merge(t, { stored: sid }));
+  assert.equal(t.storage.length, 0);
+  assert.equal(t.pieces.length, 1);
+  assert.equal(t.pieces[0].g, 2);
+  // 되돌리기로 복제되지 않는다
+  assert.ok(G.undo(t));
+  assert.equal(t.storage.length + t.pieces.length, 3);
+});
+
+test('창고: 손에 든 상품(입고·발주)을 바로 넣을 수 있고 기본 입고 횟수는 정상 진행', () => {
+  const s = G.newGame(70);
+  G.choose(s, 0);
+  assert.equal(s.phase, 'place');
+  const id = s.hand.id;
+  assert.ok(G.store(s, 'hand'));
+  assert.equal(s.storage[0].id, id);
+  assert.equal(s.phase, 'pick');
+  assert.equal(s.picksLeft, 1);
+  // 창고 기한: 영업 3번 뒤 아침에 팔린다(압류된 날은 처리하지 않는다)
+  const t = arrange(71);
+  t.storage = [{ ...P('potion', null, null), left: 1, since: 1 }];
+  t.lives = 1;
+  t.pieces = [];
+  t.day = 9;
+  G.openShop(t);
+  assert.equal(t.phase, 'over');
+  assert.equal(t.storage.length, 1);
 });
