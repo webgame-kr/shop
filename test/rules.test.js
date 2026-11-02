@@ -1,121 +1,163 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canPlace, cellsOf, dailyIncome, evaluate, shapeOf, sizeOf } from '../js/rules.js';
+import { canPlace, cellsOf, evaluate, gradeBase, shapeOf, sizeOf, START_SIZE } from '../js/rules.js';
 import * as G from '../js/game.js';
 
+const dim = { cols: 5, rows: 4 };
 let uid = 0;
-const P = (id, x, y, rot = 0) => ({ uid: ++uid, id, x, y, rot });
-const totals = (pieces) => pieces.map((p) => evaluate(pieces).get(p.uid).total);
+const P = (id, x, y, rot = 0, g = 1) => ({ uid: ++uid, id, x, y, rot, g });
+const ev = (pieces, customer = null, mods = {}) => evaluate(pieces, { dim, customer, mods });
+const tot = (pieces, p, ...rest) => ev(pieces, ...rest).items.get(p.uid).total;
 
 test('회전한 모양과 차지하는 칸이 일치한다', () => {
-  assert.deepEqual(shapeOf('fish', 1), [[0, 0], [0, 1], [0, 2]]);
+  assert.deepEqual(shapeOf('bow', 1), [[0, 0], [0, 1], [0, 2]]);
   assert.deepEqual(sizeOf('boots', 1), { w: 2, h: 2 });
-  assert.deepEqual(shapeOf('boots', 0), [[0, 0], [0, 1], [1, 1]]);
-  assert.deepEqual(shapeOf('boots', 1), [[0, 0], [1, 0], [0, 1]]);
-  assert.deepEqual(shapeOf('boots', 4), shapeOf('boots', 0));
-  assert.deepEqual(cellsOf(P('safe', 2, 1, 1)), [[2, 1], [3, 1], [4, 1]]);
+  assert.deepEqual(cellsOf(P('candle', 2, 1, 1)), [[2, 1], [3, 1]]);
 });
 
-test('겹치거나 진열대 밖으로 나가면 놓을 수 없다', () => {
-  const a = P('fridge', 0, 0);
-  assert.equal(canPlace([a], P('apple', 1, 1)), false);
-  assert.equal(canPlace([a], P('apple', 2, 1)), true);
-  assert.equal(canPlace([], P('fish', 4, 0)), false);
-  assert.equal(canPlace([], P('safe', 0, 3)), false);
-  assert.equal(canPlace([], P('safe', 3, 4, 1)), true);
+test('겹치기·진열대 밖·봉인 칸에는 놓을 수 없다', () => {
+  const a = P('shield', 0, 0);
+  assert.equal(canPlace(dim, [a], P('potion', 1, 1)), false);
+  assert.equal(canPlace(dim, [a], P('potion', 2, 1)), true);
+  assert.equal(canPlace(dim, [], P('bow', 3, 0)), false);
+  assert.equal(canPlace(dim, [], P('potion', 2, 2), undefined, ['2,2']), false);
 });
 
-test('대각선은 인접이 아니다', () => {
-  const ps = [P('bread', 0, 0), P('milk', 2, 1)];
-  assert.deepEqual(totals(ps), [4, 4]);
+test('등급 기본 매출은 약 2.4배, 하위 셋보다 작다', () => {
+  assert.equal(gradeBase('potion', 1), 3);
+  assert.equal(gradeBase('potion', 2), 7);
+  assert.equal(gradeBase('potion', 3), 17);
+  assert.ok(gradeBase('bow', 2) < 3 * gradeBase('bow', 1));
 });
 
-test('빵과 우유', () => {
-  const ps = [P('bread', 0, 0), P('milk', 2, 0)];
-  assert.deepEqual(totals(ps), [7, 6]);
+test('약초 두 개 옆 물약도 약초 보너스는 한 번, 높은 등급 기준', () => {
+  const potion = P('potion', 1, 1);
+  const pieces = [potion, P('herb', 0, 1), P('herb', 2, 1, 0, 2)];
+  assert.equal(tot(pieces, potion), 3 + 4);
 });
 
-test('사과는 이웃 사과 최대 +2, 냉장고 두 개여도 +2 한 번', () => {
-  const ps = [P('apple', 2, 2), P('apple', 1, 2), P('apple', 3, 2), P('apple', 2, 1), P('fridge', 2, 3), P('fridge', 0, 0)];
-  const ev = evaluate(ps);
-  assert.equal(ev.get(ps[0].uid).total, 2 + 2 + 2);
-  // (2,1) 사과: 아래 사과 하나 + 왼쪽 냉장고(0,0~1,1) → 2+1+2
-  assert.equal(ev.get(ps[3].uid).total, 5);
-  const milk = P('milk', 2, 0);
-  const two = [P('fridge', 0, 0), milk, P('fridge', 3, 0)];
-  assert.equal(evaluate(two).get(milk.uid).total, 6);
+test('저주 인형은 이웃을 깎되 0 아래로는 안 내려간다', () => {
+  const herb = P('herb', 0, 0);
+  const doll = P('doll', 1, 0);
+  const r = ev([herb, doll]);
+  assert.equal(r.items.get(herb.uid).total, 0);
+  assert.equal(r.items.get(doll.uid).total, 9);
+  assert.equal(r.sum.total, 9);
 });
 
-test('간판은 다른 간판에 주지 않고, 두 간판이어도 +1', () => {
-  const bread = P('bread', 2, 1);
-  const s1 = P('sign', 2, 0), s2 = P('sign', 2, 2), s3 = P('sign', 0, 0);
-  const ev = evaluate([bread, s1, s2, s3]);
-  assert.equal(ev.get(bread.uid).total, 5);
-  assert.equal(ev.get(s1.uid).total, 1);
-  assert.equal(ev.get(s3.uid).total, 1);
+test('손님 보너스: 원정대·고블린·귀족·떠돌이', () => {
+  const sword = P('sword', 0, 0), sword2 = P('sword', 1, 0), orb = P('orb', 2, 0, 0, 2);
+  const pieces = [sword, sword2, orb];
+  assert.equal(tot(pieces, sword, 'adventurers'), 5 + 2);
+  assert.equal(tot(pieces, sword, 'goblins'), 5 + 3);
+  assert.equal(tot(pieces, orb, 'goblins'), gradeBase('orb', 2));
+  assert.equal(tot(pieces, orb, 'noble'), gradeBase('orb', 2) + 6);
+  assert.equal(ev(pieces, 'wanderers').sum.customer, 6);
+  assert.equal(ev(pieces, 'witches', { noCustomer: true }).sum.customer, 0);
 });
 
-test('향수·장화, 보석함·금고, 화분, 운동화', () => {
-  const t1 = P('boots', 0, 0), pf = P('perfume', 1, 0);
-  let ev = evaluate([t1, pf]);
-  assert.equal(ev.get(t1.uid).total, 10);
-  assert.equal(ev.get(pf.uid).total, 3);
-
-  const j = P('jewel', 0, 0), s = P('safe', 2, 0), j2 = P('jewel', 3, 0);
-  ev = evaluate([j, s, j2]);
-  assert.equal(ev.get(s.uid).total, 7);
-  assert.equal(ev.get(j.uid).total, 15);
-
-  const plant = P('plant', 2, 2);
-  ev = evaluate([plant, P('apple', 1, 2), P('apple', 3, 2), P('bread', 2, 3)]);
-  assert.equal(ev.get(plant.uid).total, 1);
-  ev = evaluate([plant, P('apple', 1, 2), P('perfume', 3, 2), P('bread', 2, 3)]);
-  assert.equal(ev.get(plant.uid).total, 6);
-
-  assert.equal(evaluate([P('sneakers', 0, 2)]).values().next().value.total, 7);
-  assert.equal(evaluate([P('sneakers', 2, 2)]).values().next().value.total, 5);
-});
-
-test('보너스는 다른 보너스의 기준이 되지 않는다(정수 덧셈)', () => {
-  const ps = [P('bread', 0, 0), P('milk', 2, 0), P('sign', 0, 1)];
-  // 간판(0,1)-(1,1)은 빵과 우유(2,1) 모두에 닿는다
-  assert.equal(dailyIncome(ps), (7 + 1) + (6 + 1) + 1);
-});
-
-test('한 판: 첫 후보, 넘기기, 되돌리기, 정산은 한 번만', () => {
-  const s = G.newGame(42);
-  assert.deepEqual(s.offers, ['apple', 'bread', 'milk']);
-  assert.equal(G.canOpen(s), false);
-  G.choose(s, 1);
-  assert.equal(G.placeHand(s, 5, 0, 0), false);
-  assert.ok(G.placeHand(s, 0, 0, 0));
-  const offers = s.offers.slice();
-  assert.equal(new Set(offers).size, 3);
-  G.choose(s, 0);
+test('합성: 같은 상품·같은 등급 3개 → 한 등급 위, 기준 자리에 남는다', () => {
+  const s = G.newGame(11);
+  s.phase = 'arrange';
+  s.pieces = [P('potion', 0, 0), P('potion', 2, 2), P('potion', 4, 3), P('potion', 1, 0, 0, 2)];
+  const target = s.pieces[1].uid;
+  assert.ok(G.merge(s, target));
+  assert.equal(s.pieces.length, 2);
+  const m = s.pieces.find((p) => p.uid === target);
+  assert.deepEqual([m.g, m.x, m.y], [2, 2, 2]);
   assert.ok(G.undo(s));
-  assert.deepEqual(s.offers, offers);
-  assert.ok(G.skip(s));
-  assert.ok(G.canOpen(s));
-  const r = G.openShop(s);
-  assert.equal(r.income, 4);
-  assert.equal(G.openShop(s), null);
-  assert.equal(s.total, 4);
-  assert.equal(s.day, 2);
-  assert.equal(G.canUndo(s), false);
+  assert.equal(s.pieces.length, 4);
 });
 
-test('저장한 상태로 이어 해도 후보가 같다', () => {
-  const a = G.newGame(7);
-  G.choose(a, 0); G.placeHand(a, 0, 0, 0);
-  const b = JSON.parse(JSON.stringify(a));
-  G.choose(a, 0); G.skip(a); G.openShop(a);
-  G.choose(b, 0); G.skip(b); G.openShop(b);
-  assert.deepEqual(a.offers, b.offers);
+test('손에 든 새 상품도 합성 재료가 된다', () => {
+  const s = G.newGame(12);
+  s.pieces = [P('herb', 0, 0), P('herb', 1, 0)];
+  s.phase = 'place';
+  s.hand = { id: 'herb', g: 1, rot: 0 };
+  assert.ok(G.mergePlan(s, 'hand'));
+  assert.ok(G.merge(s, 'hand'));
+  assert.equal(s.pieces.length, 0);
+  assert.equal(s.hand.g, 2);
 });
 
-test('8일이 지나면 끝난다', () => {
+test('납부 미달이면 불꽃 하나, 잔금은 늘지 않고 유예를 받는다', () => {
   const s = G.newGame(3);
-  for (let d = 0; d < 8; d++) { G.skip(s); G.skip(s); G.openShop(s); }
+  s.phase = 'arrange';
+  s.pieces = [];
+  const r = G.openShop(s);
+  assert.equal(r.ok, false);
+  assert.equal(s.lives, 2);
+  assert.equal(s.balance, 0);
+  assert.equal(s.grace, true);
+  assert.equal(G.rerollCost(s), 0);
+  assert.equal(G.openShop(s), null);
+});
+
+test('정상 납부하면 초과분이 잔금이 된다', () => {
+  const s = G.newGame(4);
+  s.phase = 'arrange';
+  s.pieces = [P('shield', 0, 0), P('bow', 2, 0)];
+  const sales = G.income(s).sum.total;
+  const pay = G.payFor(s);
+  const r = G.openShop(s);
+  assert.ok(r.ok);
+  assert.equal(s.balance, sales - pay);
+  assert.equal(s.day, 2);
+});
+
+test('불꽃이 모두 꺼지면 끝난다', () => {
+  const s = G.newGame(5);
+  for (let i = 0; i < 3; i++) { while (s.phase !== 'arrange') G.skip(s); G.openShop(s); }
   assert.equal(s.phase, 'over');
-  assert.equal(s.history.length, 8);
+  assert.equal(s.lives, 0);
+});
+
+test('되돌리기로 잔금이나 상품을 복제할 수 없다', () => {
+  const s = G.newGame(6);
+  s.balance = 20;
+  assert.ok(G.reroll(s));
+  const after = s.balance;
+  assert.ok(G.undo(s));
+  assert.equal(s.balance, 20);
+  assert.ok(G.reroll(s));
+  assert.equal(s.balance, after);
+});
+
+test('저장한 상태로 이어 해도 후보·손님이 같다', () => {
+  const a = G.newGame(77);
+  const b = JSON.parse(JSON.stringify(a));
+  G.choose(a, 0); G.skip(a);
+  G.choose(b, 0); G.skip(b);
+  assert.deepEqual(a.offers, b.offers);
+  assert.equal(G.customerOn(a, 9), G.customerOn(b, 9));
+});
+
+test('계약: 동시에 두 개까지, 불꽃 1개면 영혼 담보 없음, 봉인 칸엔 못 놓음', () => {
+  const s = G.newGame(8);
+  s.phase = 'arrange';
+  s.contractOffer = { ids: ['seal', 'goblinloan', 'accountant'], cells: ['0,0', '1,0', '2,0'] };
+  assert.ok(G.sign(s, 'seal'));
+  assert.equal(canPlace(s.dim, s.pieces, P('potion', 0, 0), undefined, G.sealedNow(s)), false);
+  const payToday = G.payFor(s);
+  assert.equal(payToday, Math.max(1, Math.round(G.basePay(s.day) * 0.7)));
+  s.contractOffer = { ids: ['goblinloan', 'accountant', 'rush'], cells: null };
+  assert.ok(G.sign(s, 'goblinloan'));
+  s.contractOffer = { ids: ['accountant'], cells: null };
+  assert.equal(G.canSign(s, 'accountant').ok, false);
+  s.lives = 1;
+  s.contracts = [];
+  s.contractOffer = { ids: ['soul'], cells: null };
+  assert.equal(G.canSign(s, 'soul').ok, false);
+});
+
+test('진열대는 정해진 크기까지만 커진다', () => {
+  const s = G.newGame(9);
+  s.phase = 'arrange';
+  s.balance = 10000;
+  let n = 0;
+  while (G.buyExpand(s)) n++;
+  assert.equal(n, 4);
+  assert.deepEqual(s.dim, { cols: 7, rows: 6 });
+  assert.equal(G.expandCost(s), null);
+  assert.deepEqual(G.newGame(1).dim, START_SIZE);
 });
