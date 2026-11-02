@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>텍스트 테스트판 · 마왕님, 내일 갚겠습니다</title>
+<meta name="description" content="명령 한 줄씩 한 판을 진행하는 텍스트 테스트 버전. 사람과 AI가 규칙·밸런스·버그를 확인하는 용도.">
+<style>
+  :root { --bg: #1D1524; --card: #2A1F33; --line: #43344F; --ink: #F4E9D8; --soft: #B3A3B5; --flame: #FF8A3D; --gold: #F2C46B; --bad: #ff8f8f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Noto Sans KR", system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; min-height: 100dvh; grid-template-rows: auto 1fr auto; }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: var(--soft); font-size: 13px; line-height: 1.6; }
+  header code, .tips code { background: var(--card); padding: 1px 5px; border-radius: 4px; }
+  #log { background: #120C18; border: 1.5px solid var(--line); border-radius: 12px; padding: 12px; overflow: auto; min-height: 50dvh; max-height: 70dvh; font: 13px/1.5 ui-monospace, "D2Coding", Consolas, monospace; white-space: pre-wrap; word-break: break-all; margin: 0; }
+  #log .cmd { color: var(--gold); display: block; margin-top: 10px; }
+  #log .err { color: var(--bad); }
+  form { display: flex; gap: 8px; }
+  #cmd { flex: 1; min-width: 0; background: var(--card); color: var(--ink); border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 12px; font: 15px ui-monospace, Consolas, monospace; }
+  button { background: var(--card); color: var(--ink); border: 1.5px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 14px; cursor: pointer; }
+  button.primary { background: var(--flame); border-color: var(--flame); color: #22140c; font-weight: 700; }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tips { color: var(--soft); font-size: 12.5px; margin: 0; }
+  a { color: var(--gold); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>텍스트 테스트판 · 마왕님, 내일 갚겠습니다</h1>
+    <p>명령을 한 줄씩 입력해 한 판을 진행해요. 게임과 같은 규칙 코드를 쓰고, 진행은 이 브라우저에 게임과 따로 저장돼요.
+      처음이면 <code>new 7 beast</code>(시드 7, 시작 분야 마수·알), 명령 목록은 <code>help</code>.
+      <a href="./">게임으로</a></p>
+  </header>
+  <pre id="log" aria-live="polite"></pre>
+  <div>
+    <form id="f"><input id="cmd" autocomplete="off" spellcheck="false" placeholder="예: pick 1 · place 0 0 · open" aria-label="명령"><button class="primary">실행</button></form>
+    <div class="bar" style="margin-top:8px">
+      <button data-q="show">show</button><button data-q="help">help</button><button data-q="undo">undo</button>
+      <button id="link">이 판 링크 복사</button><button id="clear">기록 지우기</button>
+    </div>
+    <p class="tips" style="margin-top:8px">링크 하나로 재현하기: 주소 뒤에 <code>#r=</code>와 명령을 <code>;</code>로 이어 붙이면 열 때 처음부터 그대로 다시 실행해요. 예: <code>play.html#r=new 7 beast;pick 1;place 0 0</code></p>
+  </div>
+</main>
+<script type="module">
+import { run } from './js/textplay.js';
+
+const KEY = 'demon-shop:textplay';
+const $ = (id) => document.getElementById(id);
+const log = $('log');
+let state = null;
+let history = []; // 이 판에서 성공한 명령(링크 재현용)
+
+const store = {
+  get() { try { return JSON.parse(localStorage.getItem(KEY)); } catch { return null; } },
+  set(v) { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* 저장 못 해도 진행은 된다 */ } },
+};
+
+function print(cmd, r) {
+  if (cmd !== null) { const c = document.createElement('span'); c.className = 'cmd'; c.textContent = `> ${cmd}`; log.append(c); }
+  const t = document.createElement('span');
+  if (!r.ok) t.className = 'err';
+  t.textContent = r.text + '\n';
+  log.append(t);
+  while (log.childNodes.length > 400) log.firstChild.remove();
+  log.scrollTop = log.scrollHeight;
+}
+
+function exec(line) {
+  line = line.trim();
+  if (!line) return;
+  const r = run(state, line);
+  if (r.ok) {
+    const word = line.split(/\s+/)[0];
+    if (word === 'new') history = [];
+    if (!['show', 'help', 'items', 'item', 'guests'].includes(word)) history.push(line);
+    state = r.state;
+    if (state) { const { undo = [], ...rest } = state; store.set({ state: { ...rest, undo: undo.slice(-10) }, history }); }
+  }
+  print(line, r);
+  return r;
+}
+
+// #r=명령;명령… 이 있으면 처음부터 다시 실행, 없으면 저장된 판을 이어서
+const hash = decodeURIComponent(location.hash.replace(/^#/, ''));
+if (hash.startsWith('r=')) {
+  state = null; history = [];
+  const cmds = hash.slice(2).split(';').map((x) => x.trim()).filter(Boolean);
+  cmds.forEach((c) => exec(c));
+} else {
+  const saved = store.get();
+  if (saved?.state) { state = saved.state; history = saved.history ?? []; print('show', run(state, 'show')); }
+  else print(null, { ok: true, text: '진행 중인 판이 없어요. `new 7 beast` 처럼 시작하세요. 명령 목록은 `help`.' });
+}
+
+$('f').addEventListener('submit', (e) => { e.preventDefault(); exec($('cmd').value); $('cmd').value = ''; $('cmd').focus(); });
+document.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => exec(b.dataset.q)));
+$('link').addEventListener('click', async () => {
+  const url = `${location.origin}${location.pathname}#r=${encodeURIComponent(history.join(';'))}`;
+  try { await navigator.clipboard.writeText(url); print(null, { ok: true, text: `링크를 복사했어요: ${url}` }); }
+  catch { print(null, { ok: true, text: `이 링크를 복사하세요: ${url}` }); }
+});
+$('clear').addEventListener('click', () => { log.textContent = ''; });
+$('cmd').focus();
+</script>
+</body>
+</html>

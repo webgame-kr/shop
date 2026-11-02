@@ -58,7 +58,7 @@ python -m http.server 3600
 | `js/sound.js`, `sound/` | 마왕님 사운드 키트(확장판): 효과음 64개와 배경음악. 처음엔 꺼져 있다 |
 | `img/` | 상품 일러스트 42종과 마수 알 5종, 분야 아이콘 6개, 손님 초상 9종, 마왕, 불꽃 |
 | `scripts/simulate.js` | 봇으로 여러 판을 돌려 생존 일수 분포를 본다 |
-| `scripts/play.js` | 텍스트 테스트 버전: 명령으로 한 판을 진행한다 |
+| `scripts/play.js`, `play.html`, `js/textplay.js` | 텍스트 테스트 버전: 명령으로 한 판을 진행한다(Node·웹) |
 
 ## 텍스트 테스트 버전 (Claude가 플레이)
 
@@ -73,6 +73,8 @@ node scripts/play.js help            # 전체 명령
 ```
 
 명령마다 진열대(상품 번호 격자), 상품별 예상 매출과 보너스, 알의 성장 예측, 손님 호감 조건 충족 여부, 그리고 지금 해야 하는 결정(입고 후보·계약·변이·결산 보상·주력 단골·단골 제안)과 쓸 수 있는 명령을 글로 보여 준다. 같은 시드면 같은 판이 나와 버그를 다시 만들 수 있다.
+
+웹에서도 같은 것을 쓸 수 있다: https://webgame-kr.github.io/shop/play.html . 명령을 입력해 진행하고(게임 저장과 따로 이 브라우저에 저장), 주소 뒤에 `#r=`와 명령을 `;`로 이어 붙이면 열 때 처음부터 그대로 다시 실행한다. 예: `play.html#r=new 7 beast;pick 1;place 0 0`. 핵심 코드는 `js/textplay.js`이고 Node 스크립트와 웹 페이지가 함께 쓴다.
 
 Claude에게 맡길 때는 이렇게 부탁하면 된다: "shop 폴더에서 `node scripts/play.js help`를 보고 한 판 플레이하면서 이상한 점을 찾아 줘."
 
