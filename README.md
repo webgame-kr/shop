@@ -53,6 +53,23 @@ python -m http.server 3600
 | `js/sound.js`, `sound/` | 마왕님 사운드 키트(확장판): 효과음 64개와 배경음악. 처음엔 꺼져 있다 |
 | `img/` | 상품 일러스트 42종과 마수 알 5종, 분야 아이콘 6개, 손님 초상 9종, 마왕, 불꽃 |
 | `scripts/simulate.js` | 봇으로 여러 판을 돌려 생존 일수 분포를 본다 |
+| `scripts/play.js` | 텍스트 테스트 버전: 명령으로 한 판을 진행한다 |
+
+## 텍스트 테스트 버전 (Claude가 플레이)
+
+화면 없이 명령 한 줄씩 한 판을 진행한다. Claude 같은 에이전트가 직접 플레이하며 규칙·밸런스·버그를 확인하는 용도이고, 본 게임 저장(브라우저)과는 따로다. 상태는 `.play-state.json`(현재 폴더, `PLAY_STATE` 환경변수로 변경)에 남는다.
+
+```bash
+node scripts/play.js new 42 food     # 시드 42, 시작 분야 마계 식품
+node scripts/play.js pick 1          # 입고 후보 1번
+node scripts/play.js place 0 0       # (0,0)에 놓기, 회전은 세 번째 숫자
+node scripts/play.js open            # 영업하고 납부 판정
+node scripts/play.js help            # 전체 명령
+```
+
+명령마다 진열대(상품 번호 격자), 상품별 예상 매출과 보너스, 알의 성장 예측, 손님 호감 조건 충족 여부, 그리고 지금 해야 하는 결정(입고 후보·계약·변이·결산 보상·주력 단골·단골 제안)과 쓸 수 있는 명령을 글로 보여 준다. 같은 시드면 같은 판이 나와 버그를 다시 만들 수 있다.
+
+Claude에게 맡길 때는 이렇게 부탁하면 된다: "shop 폴더에서 `node scripts/play.js help`를 보고 한 판 플레이하면서 이상한 점을 찾아 줘."
 
 ## 테스트와 수치 검증
 
