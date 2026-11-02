@@ -1,0 +1,6 @@
+{
+  "name": "small-backpack-shop",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test test/", "simulate": "node scripts/simulate.js" }
+}
