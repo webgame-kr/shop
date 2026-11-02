@@ -3,103 +3,124 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f6ead4">
+  <meta name="theme-color" content="#f3eadb">
   <meta name="description" content="작은 진열대에 물건을 채우고, 최고의 조합으로 장사하는 배치 전략 게임">
   <title>작은 배낭 상점</title>
+  <link rel="icon" href="img/apple.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@400;500;700;900&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main id="app">
+    <!-- 시작 -->
     <section id="screen-start" class="screen start" hidden>
+      <div class="awning" aria-hidden="true"></div>
+      <p class="kicker">8일 동안의 진열대 장사</p>
       <h1 class="title">작은 배낭 상점</h1>
-      <p class="tagline">작은 진열대에 물건을 채우고<br>최고의 조합으로 장사하세요</p>
-      <div class="board board-static" id="start-board" aria-hidden="true"></div>
-      <div class="start-buttons">
-        <button class="btn primary big" id="btn-continue" hidden>이어 하기</button>
-        <button class="btn big" id="btn-new">새 상점 시작</button>
-      </div>
+      <div class="shelf shelf-start"><div class="board" id="start-board" aria-hidden="true"></div></div>
       <p class="best" id="start-best"></p>
-      <ul class="rules-short">
-        <li>8일 동안 하루 두 번, 후보 3개 중 하나를 골라 진열대에 놓아요.</li>
-        <li>맞닿은 상품끼리 보너스가 생겨요. 자리를 바꾸면 수익도 바뀌어요.</li>
-        <li>시간제한은 없어요. 천천히 정리하고 영업을 시작하세요.</li>
-      </ul>
-      <button class="link" data-open-help>도움말 · 상품 목록</button>
+      <div class="stack">
+        <button class="btn primary big" id="btn-continue" hidden></button>
+        <button class="btn outline big" id="btn-new">새 상점 시작</button>
+      </div>
+      <div class="note-card">
+        <p><b>하루 2번</b> 상품을 골라 진열대에 놓아요.</p>
+        <p>어울리는 상품끼리 <b>붙여 놓으면</b> 보너스 수익.</p>
+        <p>시간제한 없어요. 8일 뒤 누적 매출로 등급이 정해져요.</p>
+      </div>
+      <div class="start-foot"><button class="link green" data-open-help>규칙 · 도움말</button></div>
     </section>
 
+    <!-- 플레이 -->
     <section id="screen-play" class="screen play" hidden>
-      <header class="hud">
-        <div class="hud-day"><strong id="hud-day">1일</strong><span> / 8일</span></div>
-        <div class="hud-stat"><span class="k">누적 매출</span><strong id="hud-total">0</strong></div>
-        <div class="hud-stat"><span class="k">예상 일 수익</span><strong id="hud-income">0</strong><em id="hud-delta"></em></div>
-        <div class="hud-menu">
-          <button class="icon-btn" data-open-help aria-label="도움말">?</button>
-          <button class="icon-btn" id="btn-home" aria-label="처음 화면">⌂</button>
-        </div>
+      <header class="top">
+        <div class="day"><strong id="hud-day">1일</strong><span class="of">/ 8일</span><span class="dots" id="hud-dots"></span></div>
+        <button class="link" id="btn-coach-skip" hidden>안내 건너뛰기</button>
+        <button class="round" id="btn-menu" aria-label="메뉴"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       </header>
-      <div id="coach" class="coach" hidden></div>
-      <div class="board-wrap">
-        <div class="board" id="board"></div>
+      <div class="stats">
+        <div class="stat"><span class="k">누적 매출</span><strong id="hud-total">0</strong></div>
+        <div class="stat" id="stat-income"><span class="k">예상 일 수익</span><strong class="green" id="hud-income">+0</strong><em id="hud-delta"></em></div>
+      </div>
+      <div class="shelf"><div class="board" id="board"></div></div>
+      <div class="legend" id="legend" hidden>
+        <span><i class="lg-dash"></i>놓을 수 있음</span><span><i class="lg-ghost"></i>미리보기</span>
       </div>
       <div id="panel" class="panel" aria-live="polite"></div>
       <nav class="actions">
-        <button class="btn" id="btn-rotate"><span class="i">↻</span>회전</button>
-        <button class="btn" id="btn-undo"><span class="i">↶</span>되돌리기</button>
-        <button class="btn" id="btn-place"><span class="i">✓</span>놓기</button>
-        <button class="btn primary" id="btn-open"><span class="i">🏪</span><span id="btn-open-label">영업 시작</span></button>
+        <button class="sq" id="btn-rotate" aria-label="회전"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg></button>
+        <button class="sq" id="btn-undo" aria-label="되돌리기"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+        <button class="sq" id="btn-skip" aria-label="이번 상품 넘기기"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        <button class="btn primary main" id="btn-main"></button>
       </nav>
     </section>
 
-    <section id="screen-result" class="screen result" hidden>
-      <p class="result-day">8일 장사 끝</p>
-      <h2 class="grade" id="result-grade"></h2>
-      <p class="result-total"><span>누적 매출</span><strong id="result-total">0</strong></p>
-      <p class="result-best" id="result-best"></p>
-      <div class="board board-static" id="result-board"></div>
-      <p class="result-top" id="result-top"></p>
-      <ol class="result-days" id="result-days"></ol>
-      <div class="start-buttons">
-        <button class="btn primary big" id="btn-again">다시 하기</button>
-        <button class="btn big" id="btn-card">결과 이미지 저장</button>
-        <button class="link" id="btn-result-home">처음 화면으로</button>
+    <!-- 영업 정산 -->
+    <section id="screen-settle" class="screen settle" hidden>
+      <header class="top">
+        <h2 class="settle-title" id="settle-title"></h2>
+        <button class="pill" id="btn-settle-skip">건너뛰기</button>
+      </header>
+      <div class="shelf"><div class="board" id="settle-board"></div></div>
+      <div class="card sum">
+        <div class="row"><span>상품 기본 수익</span><b id="sum-base"></b></div>
+        <div class="row"><span>배치 보너스</span><b class="orange" id="sum-bonus"></b></div>
+        <div class="row today"><span>오늘 수익</span><strong id="sum-today"></strong></div>
+        <div class="row"><span>누적 매출</span><span class="acc"><span id="sum-from"></span> → <strong id="sum-to"></strong></span></div>
       </div>
+      <h3 class="sub">오늘의 효자 상품</h3>
+      <div class="tops" id="settle-tops"></div>
+      <div class="actions solo"><button class="btn primary main" id="btn-settle-next"></button></div>
+    </section>
+
+    <!-- 결과 -->
+    <section id="screen-result" class="screen result" hidden>
+      <div class="awning" aria-hidden="true"></div>
+      <p class="badge-best" id="result-badge" hidden></p>
+      <p class="kicker">8일 누적 매출</p>
+      <p class="big-total" id="result-total">0</p>
+      <h2 class="grade" id="result-grade"></h2>
+      <div class="bar" id="result-bar"><div class="fill" id="result-fill"></div></div>
+      <div class="bar-labels" id="result-labels"></div>
+      <p class="to-next" id="result-next"></p>
+      <div class="shelf shelf-result"><div class="board" id="result-board"></div></div>
+      <div class="card top-item" id="result-top"></div>
+      <div class="actions two">
+        <button class="btn outline main" id="btn-card"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>이미지 저장</button>
+        <button class="btn primary main" id="btn-again">다시 하기</button>
+      </div>
+      <button class="link" id="btn-result-home">처음 화면으로</button>
     </section>
   </main>
 
-  <div id="settle" class="settle" hidden>
-    <div class="settle-box">
-      <p class="settle-day" id="settle-day"></p>
-      <p class="settle-income" id="settle-income"></p>
-      <p class="settle-total" id="settle-total"></p>
-      <p class="settle-hint">눌러서 계속</p>
-    </div>
-  </div>
-
   <dialog id="help" class="sheet">
-    <form method="dialog"><button class="icon-btn close" aria-label="닫기">✕</button></form>
-    <h2>도움말</h2>
+    <form method="dialog"><button class="round close" aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></form>
+    <h2>규칙 · 도움말</h2>
     <ul class="help-rules">
       <li>한 판은 8일. 매일 후보 3개 중 하나를 골라 놓고, 한 번 더 고른 뒤 영업을 시작해요.</li>
-      <li><b>상품 누르기 → 놓을 칸 누르기 → 미리보기 확인 → 놓기</b>. 미리보기를 한 번 더 눌러도 놓여요. 끌어서 옮길 수도 있어요.</li>
-      <li>상하좌우로 한 면이라도 맞닿으면 인접이에요. 대각선은 아니에요.</li>
+      <li><b>상품 누르기 → 놓을 칸 누르기 → 미리보기 확인 → 여기에 놓기.</b> 미리보기를 한 번 더 눌러도 놓여요. 끌어서 옮길 수도 있어요.</li>
+      <li>상하좌우로 한 면이라도 맞닿으면 붙은 거예요. 대각선은 아니에요.</li>
       <li>같은 이름의 효과는 한 상품에 한 번만 붙어요. 냉장고 두 개 옆 우유도 +2, 간판 두 개 옆 빵도 +1.</li>
       <li>보너스는 다른 보너스의 기준이 되지 않아요. 모두 정수 덧셈이에요.</li>
-      <li>자리가 없으면 기존 상품을 옮기거나 버리거나, 이번 선택을 넘길 수 있어요. 버린 상품은 돈이 되지 않아요.</li>
+      <li>자리가 없으면 기존 상품을 옮기거나 버리거나, → 버튼으로 이번 선택을 넘길 수 있어요.</li>
       <li>오늘 한 일은 되돌리기로 돌릴 수 있어요. 영업을 시작하면 그날로 돌아갈 수 없어요.</li>
-      <li>상품은 팔려도 사라지지 않고, 다음 날에도 같은 수익을 만들어요.</li>
+      <li>상품은 팔려도 사라지지 않고, 다음 날에도 같은 수익을 내요.</li>
     </ul>
-    <h3>상품</h3>
+    <h3>상품 12종</h3>
     <div id="help-items" class="help-items"></div>
     <h3>최종 등급</h3>
     <ul id="help-grades" class="help-grades"></ul>
-    <p class="note">진행 상황과 최고 기록은 이 브라우저에만 저장돼요. 브라우저 데이터를 지우거나 다른 기기에서 열면 이어지지 않아요. 키보드: R 회전 · Enter 놓기 · Ctrl+Z 되돌리기 · Esc 선택 해제 · Delete 버리기</p>
+    <p class="fine">진행 상황과 최고 기록은 이 브라우저에만 저장돼요. 브라우저 데이터를 지우거나 다른 기기에서 열면 이어지지 않아요. 키보드: R 회전 · Enter 놓기 · Ctrl+Z 되돌리기 · Esc 선택 해제 · Delete 버리기</p>
+    <button class="btn outline big" id="btn-home">처음 화면으로</button>
   </dialog>
 
   <dialog id="card-dialog" class="sheet">
-    <form method="dialog"><button class="icon-btn close" aria-label="닫기">✕</button></form>
+    <form method="dialog"><button class="round close" aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></form>
     <h2>결과 이미지</h2>
     <img id="card-img" alt="결과 카드">
-    <p class="note">저장이 되지 않으면 이미지를 길게 눌러 저장하세요.</p>
+    <p class="fine">저장이 되지 않으면 이미지를 길게 눌러 저장하세요.</p>
     <a class="btn primary big" id="card-download" download="small-shop.png">이미지 저장</a>
   </dialog>
 

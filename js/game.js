@@ -5,14 +5,14 @@ const FIRST_OFFER = ['apple', 'bread', 'milk'];
 
 // 기본 상품은 자주, 특수 상품은 덜 자주.
 export const WEIGHTS = {
-  apple: 10, bread: 9, milk: 9, sneakers: 8, tshirt: 8, perfume: 7,
+  apple: 10, bread: 9, milk: 9, sneakers: 8, boots: 8, perfume: 7,
   fish: 7, plant: 6, sign: 6, fridge: 5, jewel: 4, safe: 4,
 };
 const RARE = ['fridge', 'jewel', 'safe'];
 // 짝이 없는 상품을 갖고 있으면 짝이 조금 더 잘 나온다.
 const PARTNERS = {
   jewel: ['safe'], safe: ['jewel'], bread: ['milk'], milk: ['bread', 'fridge'],
-  tshirt: ['perfume'], perfume: ['tshirt'], fish: ['fridge'], apple: ['fridge'],
+  boots: ['perfume'], perfume: ['boots'], fish: ['fridge'], apple: ['fridge'],
 };
 const UNDO_LIMIT = 60;
 

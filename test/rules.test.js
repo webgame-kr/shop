@@ -9,10 +9,10 @@ const totals = (pieces) => pieces.map((p) => evaluate(pieces).get(p.uid).total);
 
 test('회전한 모양과 차지하는 칸이 일치한다', () => {
   assert.deepEqual(shapeOf('fish', 1), [[0, 0], [0, 1], [0, 2]]);
-  assert.deepEqual(sizeOf('tshirt', 1), { w: 2, h: 2 });
-  assert.deepEqual(shapeOf('tshirt', 0), [[0, 0], [0, 1], [1, 1]]);
-  assert.deepEqual(shapeOf('tshirt', 1), [[0, 0], [1, 0], [0, 1]]);
-  assert.deepEqual(shapeOf('tshirt', 4), shapeOf('tshirt', 0));
+  assert.deepEqual(sizeOf('boots', 1), { w: 2, h: 2 });
+  assert.deepEqual(shapeOf('boots', 0), [[0, 0], [0, 1], [1, 1]]);
+  assert.deepEqual(shapeOf('boots', 1), [[0, 0], [1, 0], [0, 1]]);
+  assert.deepEqual(shapeOf('boots', 4), shapeOf('boots', 0));
   assert.deepEqual(cellsOf(P('safe', 2, 1, 1)), [[2, 1], [3, 1], [4, 1]]);
 });
 
@@ -55,8 +55,8 @@ test('간판은 다른 간판에 주지 않고, 두 간판이어도 +1', () => {
   assert.equal(ev.get(s3.uid).total, 1);
 });
 
-test('향수·티셔츠, 보석함·금고, 화분, 운동화', () => {
-  const t1 = P('tshirt', 0, 0), pf = P('perfume', 1, 0);
+test('향수·장화, 보석함·금고, 화분, 운동화', () => {
+  const t1 = P('boots', 0, 0), pf = P('perfume', 1, 0);
   let ev = evaluate([t1, pf]);
   assert.equal(ev.get(t1.uid).total, 10);
   assert.equal(ev.get(pf.uid).total, 3);
