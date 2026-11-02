@@ -1,8 +1,10 @@
-// 화면 흐름(디자인 시안): 시작 → 영업 예고(아침) → 입고·상점 정리(합성) → 계약 → 납부와 판정 → 압류 통지서.
+// 화면 흐름(디자인 시안·확장판): 시작 → 영업 예고(아침) → 입고(후보 역할) → 상점 정리(합성·변이·상세)
+// → 계약(즉시·기간·조건) → 납부와 판정 → 결산 보상 → 단골 제안 → … → 압류 통지서.
 // 선택 후 위치 누르기가 기본이고 끌기는 보조. 모든 주요 선택 뒤 자동 저장.
 import {
-  ITEMS, ITEM_IDS, CATS, CUSTOMERS, MAX_LIVES, EXPAND_STEPS,
+  ITEMS, ITEM_IDS, CATS, CUSTOMERS, MAX_LIVES, EXPAND_STEPS, DIRECTIONAL,
   shapeOf, sizeOf, cellsOf, clampAnchor, canPlace, occupancy, gradeBase, gradeLabel, roman, effectText, anyFit,
+  mutName, mutText, evaluate,
 } from './rules.js';
 import * as G from './game.js';
 import { drawCard } from './card.js';
@@ -20,20 +22,30 @@ const store = {
 const fmt = (n) => Number(n).toLocaleString('ko-KR');
 const itemImg = (id) => `img/${id}.png`;
 const guestImg = (id) => `img/guest_${id}.png`;
-const FAV = { adventurers: 'gear', witches: 'alch', school: 'magic' };
 const GUEST_LIKE = {
   adventurers: '모험 장비 상품에 보너스 매출', witches: '연금술 상품에 보너스 매출', school: '마법 잡화에 보너스 매출',
   goblins: '같은 상품이 여러 개면 보너스', noble: '높은 등급 상품을 좋아해요', wanderers: '서로 다른 상품 종류에 보너스',
+};
+const SHORT = { adventurers: '모험가', witches: '마녀', school: '마법학교', goblins: '고블린', noble: '귀족', wanderers: '떠돌이' };
+const MUT_WAY = {
+  self: '운영 방식 · 자기 매출 집중', aura: '운영 방식 · 주변 상품 지원', focus: '운영 방식 · 대상 하나 집중 지원',
+  cond: '운영 방식 · 조건 달성형', guest: '운영 방식 · 특정 손님 전문화',
 };
 
 let s = null;          // 게임 상태 (저장 대상)
 let sel = null;        // { kind: 'hand' } | { kind: 'piece', uid }
 let ghost = null;      // { x, y, rot } 미리보기
 let handRot = 0;
-let merging = null;    // 합성 미리보기: G.mergePlan 결과
+let merging = null;    // 합성 미리보기
 let spark = new Set();
 let press = null;
+let pickedOffer = null;
 let pickedContract = null;
+let pickedMut = null;
+let pickedReward = null;
+let pickedPrio = null;
+let swapOut = null;
+let stripOpen = false;
 let judgeAnim = null;
 
 /* ---------- 저장 ---------- */
@@ -41,14 +53,14 @@ let judgeAnim = null;
 function save() { if (s) store.set(KEY_RUN, s); }
 function loadRun() {
   const r = store.get(KEY_RUN);
-  return r && r.v === 2 && Array.isArray(r.pieces) ? r : null;
+  return r && r.v === 3 && Array.isArray(r.pieces) ? r : null;
 }
 const bestRecord = () => store.get(KEY_BEST);
 const tutorialDone = () => store.get(KEY_TUTORIAL) === true;
 
 /* ---------- 화면 전환 ---------- */
 
-const SCREENS = ['start', 'morning', 'play', 'contract', 'judge', 'result'];
+const SCREENS = ['start', 'morning', 'play', 'contract', 'judge', 'mutation', 'regular', 'reward', 'result'];
 function show(name) {
   for (const id of SCREENS) $(`screen-${id}`).hidden = id !== name;
   window.scrollTo(0, 0);
@@ -56,7 +68,9 @@ function show(name) {
 
 function route() {
   if (s.phase === 'over') return showResult();
-  if (s.phase === 'reward') return showJudge(true);
+  if (s.pendingMutation) { pickedMut = null; S.play('mutation_open'); return showMutation(); }
+  if (s.phase === 'reward') return showReward();
+  if (s.regularOffer) return showRegular();
   if (!s.briefSeen) return showMorning();
   show('play');
   render();
@@ -90,6 +104,7 @@ function resume() {
 function resetSelection() {
   ghost = null;
   merging = null;
+  pickedOffer = null;
   handRot = s?.hand?.rot ?? 0;
   sel = s?.phase === 'place' && s.hand ? { kind: 'hand' } : null;
 }
@@ -104,11 +119,14 @@ function statusHTML() {
   return `<span class="flames" aria-label="영혼의 불꽃 ${s.lives}개">${flamesHTML(s.lives)}</span><span>잔금<b>${fmt(s.balance)}</b></span>`;
 }
 
+const hexHTML = (id, m, cls = 'mhex') => `<span class="${cls} ${m}" title="${mutName(id, m)}">${mutName(id, m)[0]}</span>`;
+
 /* ---------- 02 영업 예고 ---------- */
 
 function demonLine() {
   const pay = G.payFor(s);
   const today = G.customerOn(s, s.day);
+  if (G.debtDueToday(s)) return `오늘은 빚 갚는 날이지. ${fmt(pay)}, 잊지 않았겠지?`;
   if (s.lives === 1) return `마지막 불꽃이군. 오늘은 ${fmt(pay)}이다. 가게 열쇠는 잘 챙겨 두게.`;
   if (s.grace) return '어제는 모자랐지? 이번만 후보를 공짜로 다시 뽑게 해 주지.';
   if (G.isSettleDay(s.day)) return `오늘은 결산일이지. ${fmt(pay)}, 깎아 줄 생각은 없다네.`;
@@ -127,24 +145,25 @@ function demonLine() {
 
 function guestCard(id, label, off = false) {
   const c = CUSTOMERS[id];
-  return `<span class="k">${label}</span><img src="${guestImg(id)}" alt=""><b>${c.name}</b><p>${off ? '계약 때문에 오늘은 효과가 없어요' : GUEST_LIKE[id]}</p>`;
+  const fav = s.favor[id] ?? 0;
+  const reg = s.regulars.includes(id) ? ' · 단골' : fav ? ` · 호감 ${'♥'.repeat(fav)}` : '';
+  return `<span class="k">${label}${reg}</span><img src="${guestImg(id)}" alt=""><b>${c.name}</b><p>${off ? '계약 때문에 오늘은 효과가 없어요' : GUEST_LIKE[id]}<br><small>호감 조건: ${G.REGULAR[id].cond}</small></p>`;
 }
 
 function conflictText() {
   const today = G.customerOn(s, s.day);
   const { mods } = G.modsFor(s);
   if (mods.noCustomer) return '계약 때문에 오늘 손님의 보너스가 없어요.';
-  const cat = FAV[today];
+  const cat = CUSTOMERS[today].fav;
   if (cat && mods.catFlat[cat] < 0) return `오늘 손님은 ${CATS[cat].name}을 좋아하지만, 계약 때문에 ${CATS[cat].name} 보너스가 줄어요.`;
   return '';
 }
 
-function contractRowsHTML() {
-  const active = G.activeContracts(s);
-  if (!active.length) return '';
-  return `<div class="sect"><h3>진행 중인 계약</h3><span>${active.length} / 2</span></div>` +
-    active.map((c) => `<div class="c-row"><div><b>${G.CONTRACTS[c.id].name}</b><small>${G.CONTRACTS[c.id].gain} · ${G.CONTRACTS[c.id].cost}</small></div>` +
-      `<span class="left-tag">${G.contractDaysLeft(s, c)}일 남음</span></div>`).join('');
+function contractLine(c) {
+  const t = G.CONTRACTS[c.id];
+  const d = G.describeContract(s, c.id, c.data);
+  if (t.type === 'cond') return `<div class="c-row"><div><b>${t.name}</b><small>${d.cond} · ${G.condProgressText(s, c)}</small></div><span class="left-tag">조건형</span></div>`;
+  return `<div class="c-row"><div><b>${t.name}</b><small>${d.gain} · ${d.cost}</small></div><span class="left-tag">${G.contractDaysLeft(s, c)}일 남음</span></div>`;
 }
 
 function showMorning() {
@@ -157,19 +176,25 @@ function showMorning() {
   const prev = s.history[s.history.length - 1];
   const nextSettle = Math.ceil(s.day / G.SETTLE_EVERY) * G.SETTLE_EVERY;
   const settleText = G.isSettleDay(s.day) ? '오늘은 결산일 · 성공하면 성장 보상' : `결산일(${nextSettle}일 차)까지 ${nextSettle - s.day}일`;
-  $('m-paysub').textContent = `${prev ? `어제 ${fmt(prev.pay)} · ` : ''}${settleText}`;
+  const debt = G.debtDueToday(s);
+  $('m-paysub').textContent = `${prev ? `어제 ${fmt(prev.pay)} · ` : ''}${debt ? `빚 상환 +${debt.data.repay} 포함 · ` : ''}${settleText}`;
   $('m-pay').parentElement.classList.toggle('settle-day', G.isSettleDay(s.day));
   $('m-line').textContent = demonLine();
   $('m-today').innerHTML = guestCard(today, '오늘의 손님', mods.noCustomer);
   $('m-today').classList.toggle('off', mods.noCustomer);
   $('m-tomorrow').innerHTML = guestCard(tomorrow, '내일의 손님');
+  const active = G.activeContracts(s);
+  let html = '';
+  if (s.regulars.length) html += `<div class="sect"><h3>단골</h3><span>${s.regulars.length} / 2</span></div>` +
+    s.regulars.map((g) => `<div class="c-row"><div><b>${CUSTOMERS[g].name}</b><small>${G.REGULAR[g].effect}</small></div></div>`).join('');
+  if (active.length) html += `<div class="sect"><h3>진행 중인 계약</h3><span>${active.length} / 2</span></div>` + active.map(contractLine).join('');
   const warn = conflictText();
-  let html = contractRowsHTML() + (warn ? `<p class="warn">${warn}</p>` : '');
+  if (warn) html += `<p class="warn">${warn}</p>`;
   if (s.grace) html += `<div class="grace"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg><div><b>마왕의 유예</b>오늘 상품 후보 전체를 한 번 무료로 다시 뽑을 수 있어요. 오늘이 끝나면 사라져요.</div></div>`;
   if (s.contractOffer) html += `<button class="offer-callout" data-go="contract"><span>📜</span><span><b>마왕의 계약 제안 ${s.contractOffer.ids.length}건</b><small>서명하거나 모두 거절해야 오늘 영업을 시작할 수 있어요.</small></span><span>›</span></button>`;
   $('m-contracts').innerHTML = html;
   show('morning');
-  S.play(G.isSettleDay(s.day) ? 'settlement_toll' : 'demon_voice', { delay: 0.2 });
+  S.play(debt ? 'debt_due' : G.isSettleDay(s.day) ? 'settlement_toll' : 'demon_voice', { delay: 0.2 });
 }
 
 function leaveMorning() {
@@ -184,7 +209,6 @@ function leaveMorning() {
 const pct = (v, n) => (v / n) * 100;
 const GAP = '0.5cqw';
 
-// 다음 확장 칸까지 보여 주고 자물쇠를 건다
 function viewDim() {
   return s.expand < EXPAND_STEPS.length ? EXPAND_STEPS[s.expand] : s.dim;
 }
@@ -206,16 +230,17 @@ function labelBox(p) {
   return { x: bx, y: by, w: 1, h: 1 };
 }
 
-// 일러스트: 길쭉한 상품을 옆으로 돌리면 그림도 90도
+// 일러스트: 길쭉한 상품을 옆으로 돌리면 그림도 90도, 창처럼 방향이 있는 상품은 회전 그대로
 function picHTML(dim, p, b, textRows) {
   const cell = 100 / dim.cols;
   const w = b.w * cell - 2.2;
   const h = Math.max(b.h * cell - 2.2 - textRows * 3.2, cell * 0.45);
   const base = sizeOf(p.id, 0);
-  const turned = base.w !== base.h && p.rot % 2 === 1;
+  const deg = DIRECTIONAL.has(p.id) ? (p.rot % 4) * 90 : base.w !== base.h && p.rot % 2 === 1 ? 90 : 0;
+  const turned = deg % 180 === 90;
   const [mw, mh] = turned ? [h, w] : [w, h];
   return `<span class="pic" style="width:${w}cqw;height:${h}cqw">` +
-    `<img src="${itemImg(p.id)}" alt="" style="max-width:${mw}cqw;max-height:${mh}cqw;transform:translate(-50%,-50%)${turned ? ' rotate(90deg)' : ''}"></span>`;
+    `<img src="${itemImg(p.id)}" alt="" style="max-width:${mw}cqw;max-height:${mh}cqw;transform:translate(-50%,-50%)${deg ? ` rotate(${deg}deg)` : ''}"></span>`;
 }
 
 function pieceHTML(dim, p, { cls = '', sub = '', tag = '', rows = sub ? 1 : 0 } = {}) {
@@ -223,7 +248,8 @@ function pieceHTML(dim, p, { cls = '', sub = '', tag = '', rows = sub ? 1 : 0 } 
   const has = (x, y) => cells.some((c) => c[0] === x && c[1] === y);
   const it = ITEMS[p.id];
   const g = p.g ?? 1;
-  let html = `<div class="piece g${Math.min(g, 6)} ${cls}" style="--cat:${CATS[it.cat].color}" data-uid="${p.uid ?? ''}" aria-label="${gradeLabel(g)} ${it.name}">`;
+  const m = g >= 2 ? s?.mutations?.[p.id] : null;
+  let html = `<div class="piece g${Math.min(g, 6)} ${cls}" style="--cat:${CATS[it.cat].color}" data-uid="${p.uid ?? ''}" aria-label="${gradeLabel(g)} ${it.name}${m ? ` ${mutName(p.id, m)}` : ''}">`;
   for (const [x, y] of cells) {
     const out = [!has(x, y - 1), !has(x + 1, y), !has(x, y + 1), !has(x - 1, y)];
     const c = [];
@@ -236,7 +262,7 @@ function pieceHTML(dim, p, { cls = '', sub = '', tag = '', rows = sub ? 1 : 0 } 
   }
   const b = labelBox(p);
   html += `<div class="lbl" style="left:${pct(b.x, dim.cols)}%;top:${pct(b.y, dim.rows)}%;width:${pct(b.w, dim.cols)}%;height:${pct(b.h, dim.rows)}%">` +
-    `<span class="gtag">${roman(g)}</span>${g >= 4 ? `<span class="gnum">${g}</span>` : ''}` +
+    `<span class="gtag">${roman(g)}</span>${m ? hexHTML(p.id, m) : ''}${g >= 4 ? `<span class="gnum">${g}</span>` : ''}` +
     `${picHTML(dim, p, b, rows)}${sub}${tag}</div></div>`;
   return html;
 }
@@ -263,9 +289,9 @@ function sizeBoard(el, dim, capVh = 0) {
   if (capVh) el.parentElement.style.width = `min(100%, calc(${capVh}dvh * ${dim.cols} / ${dim.rows} + 16px))`;
 }
 
-function staticBoard(el, dim, pieces, subOf = null) {
+function staticBoard(el, dim, pieces) {
   sizeBoard(el, dim);
-  el.innerHTML = cellsHTML(dim, false) + pieces.map((p) => pieceHTML(dim, p, { sub: subOf ? subOf(p) : '' })).join('');
+  el.innerHTML = cellsHTML(dim, false) + pieces.map((p) => pieceHTML(dim, p)).join('');
 }
 
 /* ---------- 선택과 미리보기 ---------- */
@@ -282,7 +308,7 @@ const ignoreUid = () => (sel?.kind === 'piece' ? sel.uid : undefined);
 function ghostPiece() {
   if (!ghost || !sel) return null;
   const it = selectedItem();
-  return { uid: sel.kind === 'piece' ? sel.uid : -1, id: it.id, g: it.g, bless: it.bless, ...ghost };
+  return { uid: sel.kind === 'piece' ? sel.uid : -1, id: it.id, g: it.g, ...ghost };
 }
 function ghostValid() {
   const g = ghostPiece();
@@ -326,6 +352,16 @@ function select(next) {
   ghost = null;
   merging = null;
   if (next?.kind === 'hand') handRot = s.hand.rot ?? 0;
+  if (next?.kind === 'piece') {
+    const r = G.income(s).items.get(next.uid);
+    if (r?.bonuses.some((b) => b.from.length)) S.play('link_highlight');
+  }
+}
+
+function afterAction() {
+  if (s.pendingMutation) { save(); return route(); }
+  save();
+  render();
 }
 
 function commit() {
@@ -341,8 +377,8 @@ function commit() {
   if (spark.size) S.play('coin_tick', { delay: 0.15 });
   press = uid;
   select(null);
-  save();
-  render();
+  if (s.phase === 'pick') S.play('restock_new', { delay: 0.25 });
+  afterAction();
   return true;
 }
 
@@ -358,25 +394,18 @@ function markSparks(before) {
 
 /* ---------- 03 상점 정리 ---------- */
 
-function formula(r) {
-  const parts = r.bonuses.map((b) => `${b.amount < 0 ? '-' : '+'} ${b.label} ${Math.abs(b.amount)}`);
-  return `기본 ${r.base} ${parts.join(' ')} = 하루 ${r.total}`.replace(/ {2,}/g, ' ');
-}
-
 function render() {
   if (!s) return;
-  if (s.phase === 'over' || s.phase === 'reward') return route();
+  if (s.phase === 'over' || s.phase === 'reward' || s.pendingMutation) return route();
 
   const ev = G.income(s);
   const prev = previewPieces();
   let prevEv = prev ? G.income(s, prev) : null;
-  // 합성 미리보기도 같은 게이지로 보여 준다
-  let mergedPieces = null;
-  if (merging) {
+  if (merging && merging.target.uid !== -1) {
     const used = new Set(merging.set.map((q) => q.uid));
-    mergedPieces = s.pieces.filter((p) => p.uid === merging.target.uid || !used.has(p.uid))
+    const merged = s.pieces.filter((p) => p.uid === merging.target.uid || !used.has(p.uid))
       .map((p) => (p.uid === merging.target.uid ? { ...p, g: merging.g } : p));
-    if (merging.target.uid !== -1) prevEv = G.income(s, mergedPieces);
+    prevEv = G.income(s, merged);
   }
   const sales = ev.sum.total;
   const shown = prevEv ? prevEv.sum.total : sales;
@@ -384,24 +413,29 @@ function render() {
   const coach = coachStep();
 
   $('p-day').textContent = `${s.day}일 차`;
-  $('p-sub').textContent = s.phase === 'arrange' ? '상점 정리' : '입고';
+  $('p-sub').textContent = s.phase === 'pick' ? `입고 ${s.picksDone + 1}/${s.picksDone + s.picksLeft}` : '상점 정리';
   $('p-status').innerHTML = statusHTML();
   $('btn-coach-skip').hidden = !coach;
   $('btn-menu').hidden = !!coach;
 
-  // 예상 매출 / 납부액 게이지: 부족분은 주황 빗금
   $('g-sales').textContent = fmt(shown);
   $('g-pay').textContent = fmt(pay);
-  // 막대 전체가 납부액: 채운 만큼이 예상 매출, 남은 만큼이 부족분
   $('g-fill').style.width = `${(Math.min(shown, pay) / Math.max(pay, 1)) * 100}%`;
   $('g-short').style.width = `${(Math.max(0, pay - shown) / Math.max(pay, 1)) * 100}%`;
   const note = $('g-note');
-  if (shown < pay) { note.textContent = `${fmt(pay - shown)} 부족 · 이대로면 불꽃이 하나 꺼져요`; note.className = 'g-note short'; }
-  else { note.textContent = `납부 가능 · 잔금 +${fmt(shown - pay)}`; note.className = 'g-note ok'; }
-  if (prevEv && shown !== sales) note.textContent += ` (지금 ${fmt(sales)} → ${fmt(shown)})`;
+  if (shown < pay) { note.textContent = `${fmt(pay - shown)} 부족 · 불꽃 위험`; note.className = 'g-note short'; }
+  else { note.textContent = `잔금 +${fmt(shown - pay)}`; note.className = 'g-note ok'; }
   $('gauge').classList.toggle('hl', coach === 3);
 
-  renderChips();
+  renderStrip();
+
+  if (s.phase === 'pick') {
+    $('board').parentElement.hidden = true;
+    renderOffers(coach);
+    renderActions(coach);
+    return;
+  }
+  $('board').parentElement.hidden = false;
 
   // 진열대
   const board = $('board');
@@ -409,6 +443,10 @@ function render() {
   sizeBoard(board, vdim, 34);
   const g = ghostPiece();
   const matUids = new Set(merging ? merging.set.map((q) => q.uid) : []);
+  // 선택한 상품이 받는 효과의 출처: 화살표와 받는 양
+  const srcGive = new Map();
+  const selP = !merging && !ghost ? selectedPiece() : null;
+  if (selP) for (const b of ev.items.get(selP.uid).bonuses) for (const u of b.from) srcGive.set(u, (srcGive.get(u) ?? 0) + (b.from.length === 1 ? b.amount : 0));
   let html = cellsHTML(vdim, true, { ok: sel && !merging ? placeableCells() : null, sealed: G.sealedNow(s), locked: s.dim });
   for (const p of s.pieces) {
     const r = ev.items.get(p.uid);
@@ -417,13 +455,14 @@ function render() {
     if (merging && p.uid === merging.target.uid) { cls.push('result'); piece = { ...p, g: merging.g }; }
     else if (matUids.has(p.uid)) cls.push('mat');
     if (!merging && sel?.kind === 'piece' && sel.uid === p.uid) cls.push('selected', ghost ? 'lifted' : '');
+    if (srcGive.has(p.uid)) cls.push('link-src');
     if (spark.has(p.uid)) cls.push('spark');
     if (press === p.uid) cls.push('press');
     let tag = '';
     if (prevEv && p.uid !== g?.uid && prevEv.items.has(p.uid)) {
       const gain = prevEv.items.get(p.uid).total - r.total;
       if (gain) tag = `<span class="ptag ${gain > 0 ? 'up' : 'bad'}">${gain > 0 ? '+' : ''}${gain}</span>`;
-    }
+    } else if (srcGive.get(p.uid)) tag = `<span class="ptag src">+${srcGive.get(p.uid)}</span>`;
     const bonus = r.bonuses.some((b) => b.amount > 0);
     const sub = `<span class="per">${bonus ? '<b>✦</b> ' : ''}하루 ${(prevEv?.items.get(p.uid) ?? r).total}</span>`;
     html += pieceHTML(vdim, piece, { cls: cls.join(' '), sub, tag });
@@ -441,43 +480,96 @@ function render() {
   renderActions(coach);
 }
 
-function renderChips() {
+// 접을 수 있는 정보 줄: 손님 · 단골 · 계약
+function renderStrip() {
   const today = G.customerOn(s, s.day), tomorrow = G.customerOn(s, s.day + 1);
   const { mods } = G.modsFor(s);
-  let html = `<span class="chip"><img src="${guestImg(today)}" alt="">${CUSTOMERS[today].name}${mods.noCustomer ? ' (효과 없음)' : ''}</span>` +
-    `<span class="chip k">내일</span><span class="chip"><img src="${guestImg(tomorrow)}" alt="">${CUSTOMERS[tomorrow].name}</span>`;
-  for (const c of G.activeContracts(s)) html += `<button class="chip contract" data-go="contract-info" data-c="${c.id}">📜 ${G.CONTRACTS[c.id].name} · ${G.contractDaysLeft(s, c)}일</button>`;
-  if (s.contractOffer) html += `<button class="chip offer" data-go="contract">📜 계약 제안 ${s.contractOffer.ids.length}건</button>`;
-  if (s.miracles) html += `<span class="chip k">✨ 기적 ${s.miracles}회</span>`;
-  $('p-chips').innerHTML = html;
+  const active = G.activeContracts(s);
+  const soon = active.map((c) => G.contractDaysLeft(s, c)).sort((a, b) => a - b)[0];
+  $('strip-sum').innerHTML = `손님 <b>${SHORT[today]}</b> → <b>${SHORT[tomorrow]}</b> · 단골 <b>${s.regulars.length}/2</b> · 계약 <b>${active.length}/2</b>` +
+    (soon ? ` <span class="due">마감 D-${soon - 1}</span>` : '') + (s.contractOffer ? ' · <span class="due">제안 도착</span>' : '');
+  const head = $('strip-head');
+  head.setAttribute('aria-expanded', String(stripOpen));
+  $('strip-word').textContent = stripOpen ? '접기' : '펼치기';
+  const chips = $('p-chips');
+  chips.hidden = !stripOpen && !s.contractOffer;
+  let html = '';
+  if (stripOpen) {
+    html += `<span class="chip"><img src="${guestImg(today)}" alt="">오늘 ${CUSTOMERS[today].name}${mods.noCustomer ? ' (효과 없음)' : ''}</span>` +
+      `<span class="chip"><img src="${guestImg(tomorrow)}" alt="">내일 ${CUSTOMERS[tomorrow].name}</span>`;
+    for (const r of s.regulars) html += `<span class="chip"><img src="${guestImg(r)}" alt="">단골 · ${G.REGULAR[r].effect}</span>`;
+    for (const c of active) {
+      const t = G.CONTRACTS[c.id];
+      html += `<button class="chip contract" data-go="contract-info" data-c="${c.id}">📜 ${t.name} · ${t.type === 'cond' ? G.condProgressText(s, c) : `${G.contractDaysLeft(s, c)}일 남음`}</button>`;
+    }
+    if (s.priority) html += `<span class="chip k">★ 우선 입고 ${ITEMS[s.priority].name}</span>`;
+    if (s.tickets) html += `<span class="chip k">🎟 추가 입고 이용권 ${s.tickets}장</span>`;
+  }
+  if (s.contractOffer) html += `<button class="chip offer" data-go="contract">📜 계약 제안 ${s.contractOffer.ids.length}건 · 영업 전에 결정</button>`;
+  chips.innerHTML = html;
 }
 
 function coachHTML(step, dir) {
   const t = {
-    1: ['상품을 하나 골라 진열대에 놓아 보세요', '상품을 누른 뒤, 놓고 싶은 칸을 누르면 돼요. 오늘은 두 번 들여올 수 있어요.'],
+    1: ['상품을 하나 골라 진열대에 놓아 보세요', '후보를 누른 뒤 [고르기], 놓고 싶은 칸을 누르면 돼요. 오늘은 두 번 들여올 수 있어요.'],
     2: ['어울리는 상품을 붙여 놓으면 보너스!', '약초는 옆 물약을, 숫돌은 옆 검·활을 키워요. 상하좌우로 맞닿아야 해요.'],
-    3: ['예상 매출이 납부액을 넘는지 보고 영업!', '모자라면 영혼의 불꽃이 하나 꺼져요. 남는 돈은 잔금이 되어 다시 뽑기·확장에 써요.'],
+    3: ['예상 매출이 목표를 넘는지 보고 영업!', '모자라면 영혼의 불꽃이 하나 꺼져요. 남는 돈은 잔금이 되어 다시 뽑기·확장에 써요.'],
   }[step];
   return `<div class="coach ${dir}"><div class="step">안내 ${step} / 3</div><div class="ttl2">${t[0]}</div><p class="body">${t[1]}</p></div>`;
 }
 
-function infoHTML(item, { acts = '', formulaHTML = '', hint = '', warn = false, extra = '' }) {
+const WHY = { same: '진열 중인 상품과 같은 종류', guest: '오늘·내일 손님·단골이 좋아해요', new: '새로운 선택', reward: '보상 입고' };
+
+function renderOffers(coach) {
+  const fav = CUSTOMERS[G.customerOn(s, s.day)].fav;
+  const rows = s.offers.map((o, i) => {
+    const it = ITEMS[o.id];
+    const same = s.pieces.filter((p) => p.id === o.id && p.g === s.offerGrade).length;
+    const why = [o.prio ? '★ 우선 입고' : null, WHY[o.why], same >= 2 ? '합성 재료 완성' : same === 1 ? '합성까지 1개' : null,
+      o.why !== 'guest' && fav === it.cat ? '오늘 손님 선호' : null].filter(Boolean).join(' · ');
+    return `<button class="orow${pickedOffer === i ? ' sel' : ''}${coach === 1 && i === 0 && pickedOffer === null ? ' hl' : ''}" data-offer="${i}">
+      <span class="art"><img src="${itemImg(o.id)}" alt=""></span>
+      <span class="body"><span class="nm">${it.name}<span class="r">${roman(s.offerGrade)}</span><span class="cat" style="background:${CATS[it.cat].color}">${CATS[it.cat].name}</span></span>
+      <span class="why">${why}</span><span class="eff">${it.cells.length}칸 · 기본 ${gradeBase(o.id, s.offerGrade)} · ${effectText(o.id, s.offerGrade)}</span></span></button>`;
+  }).join('');
+  const sum = `<dl class="offer-sum"><dt>우선 입고</dt><dd>${s.priority ? `${ITEMS[s.priority].name} <small>(다음 결산일에 변경)</small>` : '<small>없음 · 결산 보상으로 지정</small>'}</dd>` +
+    `<dt>단골</dt><dd>${s.regulars.length ? s.regulars.map((g) => CUSTOMERS[g].name).join(' · ') : '<small>아직 없음</small>'}</dd></dl>`;
+  $('panel').innerHTML = (coach ? coachHTML(coach, 'down') : '') +
+    `<div class="panel-head"><h3>오늘의 후보</h3></div><p class="fine" style="margin:0 0 10px">후보마다 왜 나왔는지 표시돼요. 같은 상품은 한 묶음에 두 번 나오지 않아요.</p>` +
+    `<div class="offer-list">${rows}</div>${sum}`;
+}
+
+function detailHTML(item, now, after, { acts = '', hint = '', warn = false, extra = '' } = {}) {
   const it = ITEMS[item.id];
   const g = item.g ?? 1;
-  return `<div class="info">
-    <div class="head"><div class="thumb"><img src="${itemImg(item.id)}" alt=""></div>
-      <div><div class="nm">${gradeLabel(g)} ${it.name}<span class="r">${roman(g)}</span></div>
-      <div class="meta">${CATS[it.cat].name} · ${it.cells.length}칸 · 기본 ${gradeBase(item.id, g)} / 일${item.bless ? ` · 기적 +${item.bless}` : ''}</div></div>
-      <div class="acts">${acts}</div></div>
-    <p class="eff">${effectText(item.id, g)}</p>
-    ${formulaHTML ? `<div class="formula">${formulaHTML}</div>` : ''}
-    ${hint ? `<p class="hint${warn ? ' warn' : ''}">${hint}</p>` : ''}
-    ${extra}</div>`;
+  const m = s.mutations[item.id];
+  const same = s.pieces.filter((p) => p.id === item.id && p.g === g).length + (item.uid === -1 ? 1 : 0);
+  const need = Math.max(0, 3 - same);
+  const parts = { base: 0, place: 0, mut: 0, customer: 0, contract: 0 };
+  const take = (r) => { const o = { base: r.base, place: 0, mut: 0, customer: 0, contract: 0 }; r.bonuses.forEach((b) => { o[b.kind] += b.amount; }); return o; };
+  const a = now ? take(now) : parts;
+  const b = after ? take(after) : null;
+  const box = (k, label) => {
+    const v = (b ?? a)[k];
+    const diff = b ? b[k] - a[k] : 0;
+    const txt = k === 'base' ? fmt(v) : `${v >= 0 ? '+' : ''}${fmt(v)}`;
+    return `<div>${label}<b class="${diff > 0 ? 'up' : diff < 0 ? 'dn' : ''}">${txt}</b></div>`;
+  };
+  const total = (after ?? now)?.total ?? gradeBase(item.id, g);
+  const diffTotal = after && now ? after.total - now.total : 0;
+  return `<div class="detail">
+    <div class="dh"><span class="nm">${it.name} ${roman(g)}</span>${m && g >= 2 ? `${hexHTML(item.id, m, 'hex-big')}<span class="mname">${mutName(item.id, m)}</span>` : ''}<span class="acts">${acts}</span></div>
+    <dl><dt>기본 효과</dt><dd>${effectText(item.id, g)}</dd>
+      <dt>합성 등급</dt><dd>${roman(g)} · ${roman(g + 1)}까지 ${roman(g)} ${need ? `${need}개 더 필요` : '합성 가능'}</dd>
+      <dt>변이</dt><dd class="${m ? '' : 'muted'}">${m ? (g >= 2 ? mutText(item.id, m, g) : `Ⅱ등급부터 적용 · ${mutName(item.id, m)}: ${mutText(item.id, m, 2)}`) : '처음 Ⅱ등급이 되면 두 변이 중 하나를 골라요'}</dd></dl>
+    <div class="chain">${box('base', '기본')}<i>›</i>${box('place', '배치')}<i>›</i>${box('mut', '변이')}<i>›</i>${box('customer', '손님')}<i>›</i>${box('contract', '계약')}</div>
+    <div class="day"><span>하루 예상${diffTotal ? ` <small>(${diffTotal > 0 ? '+' : ''}${diffTotal})</small>` : ''}</span><b>${fmt(total)}</b></div>
+    ${hint ? `<p class="hint${warn ? ' warn' : ''}">${hint}</p>` : ''}${extra}</div>`;
 }
 
 function mergeOfferHTML(plan) {
   if (!plan) return '';
-  return `<div class="merge-offer"><span>🔥 <b>합성 가능</b> · 같은 ${gradeLabel(plan.target.g)} ${ITEMS[plan.target.id].name} 3개</span>` +
+  return `<div class="merge-offer"><span>🔥 <b>합성 가능</b> · 같은 ${ITEMS[plan.target.id].name} ${roman(plan.target.g)} 3개</span>` +
     `<button class="small-btn hot" data-act="merge-preview">미리보기</button></div>`;
 }
 
@@ -487,15 +579,14 @@ function mergePanelHTML() {
   const name = ITEMS[id].name;
   const before = m.set.reduce((a, q) => a + gradeBase(id, q.g), 0);
   const after = gradeBase(id, m.g);
-  const freed = ITEMS[id].cells.length * 2;
-  const tomorrow = G.customerOn(s, s.day + 1), today = G.customerOn(s, s.day);
+  const today = G.customerOn(s, s.day), tomorrow = G.customerOn(s, s.day + 1);
   const rows = [
     ['오늘 기본 매출', `${before} → ${after} <span class="minus">(${after - before >= 0 ? '+' : ''}${after - before})</span>`],
-    ['빈 칸', `+${freed}칸`],
+    ['빈 칸', `+${ITEMS[id].cells.length * 2}칸`],
   ];
+  if (m.g === 2 && !s.mutations[id]) rows.push(['변이', '처음 Ⅱ등급 · 변이를 골라요']);
   if (today === 'goblins') rows.push(['오늘 고블린 행상단', '같은 상품 보너스가 줄어요']);
   if (tomorrow === 'noble' || today === 'noble') rows.push([`${today === 'noble' ? '오늘' : '내일'} 귀족 수집가`, '높은 등급 보너스 대상']);
-  if (s.miracles) rows.push(['세 번의 기적', `영구 +${4 * m.g}`]);
   const where = m.target.uid === -1 ? '손에 든 새 상품이 한 등급 올라요.' : '흐리게 표시된 칸은 합성 후 비어요.';
   return `<div class="parch-panel"><h4>${gradeLabel(m.target.g)} ${name} <span class="r">${roman(m.target.g)}</span> × 3 → ${gradeLabel(m.g)} ${name} <span class="r">${roman(m.g)}</span></h4>` +
     `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl><p>${where} 영업 전까지 되돌릴 수 있어요.</p></div>`;
@@ -507,93 +598,81 @@ function renderPanel(ev, prevEv, coach) {
 
   if (sel?.kind === 'piece') {
     const p = selectedPiece();
-    let f = formula(ev.items.get(p.uid));
-    let hint = '옮길 칸을 누르거나 끌어 보세요. 회전도 미리 볼 수 있어요.';
-    let warn = false;
+    const now = ev.items.get(p.uid);
+    let after = null, hint = '옮길 칸을 누르거나 끌어 보세요. 녹색 점선 상품이 효과를 주고 있어요.', warn = false;
     if (ghost) {
-      if (prevEv) {
-        const diff = prevEv.sum.total - ev.sum.total;
-        f += `<span class="after${diff < 0 ? ' down' : ''}">옮기면 ${formula(prevEv.items.get(p.uid))} · 전체 ${diff >= 0 ? '+' : ''}${diff}</span>`;
-        hint = '';
-      } else { hint = '다른 상품이나 봉인된 칸과 겹쳐서 놓을 수 없어요.'; warn = true; }
+      if (prevEv) { after = prevEv.items.get(p.uid); hint = `옮기면 전체 매출 ${prevEv.sum.total - ev.sum.total >= 0 ? '+' : ''}${prevEv.sum.total - ev.sum.total}`; }
+      else { hint = '다른 상품이나 봉인된 칸과 겹쳐서 놓을 수 없어요.'; warn = true; }
     }
     const acts = `<button class="small-btn" data-act="discard">버리기</button><button class="small-btn" data-act="deselect">닫기</button>`;
-    panel.innerHTML = infoHTML(p, { acts, formulaHTML: f, hint, warn, extra: ghost ? '' : mergeOfferHTML(G.mergePlan(s, p.uid)) });
+    panel.innerHTML = detailHTML(p, now, after, { acts, hint, warn, extra: ghost ? '' : mergeOfferHTML(G.mergePlan(s, p.uid)) });
     return;
   }
 
   if (s.phase === 'place' && s.hand) {
+    const h = { ...s.hand, uid: -1 };
     if (!sel) {
-      panel.innerHTML = infoHTML(s.hand, { acts: '<button class="small-btn hot" data-act="hold">새 상품 들기</button>', hint: '진열대 정리 중이에요. 상품을 눌러 옮기거나 버리거나 합성한 뒤 [새 상품 들기]를 누르세요.' });
+      panel.innerHTML = detailHTML(h, null, null, { acts: '<button class="small-btn hot" data-act="hold">새 상품 들기</button>', hint: '진열대 정리 중이에요. 상품을 눌러 옮기거나 버리거나 합성한 뒤 [새 상품 들기]를 누르세요.' });
       return;
     }
-    let f = '', hint = '진열대에서 놓을 칸을 누르세요.', warn = false;
+    let after = null, hint = '진열대에서 놓을 칸을 누르세요.', warn = false;
     if (ghost) {
-      if (prevEv) { f = formula(prevEv.items.get(-1)); hint = ''; }
+      if (prevEv) { after = prevEv.items.get(-1); hint = ''; }
       else { hint = '다른 상품이나 봉인된 칸과 겹쳐서 놓을 수 없어요.'; warn = true; }
     } else if (!anyFit(s.dim, s.pieces, s.hand.id, G.sealedNow(s))) {
       hint = '놓을 자리가 없어요. 합성하거나, [진열대 정리]로 옮기거나 버리고, 아니면 → 버튼으로 넘겨요.';
       warn = true;
     }
     panel.innerHTML = (coach ? coachHTML(coach, 'up') : '') +
-      infoHTML(s.hand, { acts: '<button class="small-btn" data-act="tidy">진열대 정리</button>', formulaHTML: f, hint, warn, extra: ghost ? '' : mergeOfferHTML(G.mergePlan(s, 'hand')) });
+      detailHTML(h, null, after, { acts: '<button class="small-btn" data-act="tidy">진열대 정리</button>', hint, warn, extra: ghost ? '' : mergeOfferHTML(G.mergePlan(s, 'hand')) });
     return;
   }
 
-  if (s.phase === 'pick') {
-    const owned = {};
-    s.pieces.forEach((p) => { if (p.g === s.offerGrade) owned[p.id] = (owned[p.id] ?? 0) + 1; });
-    const fav = FAV[G.customerOn(s, s.day)];
-    const cards = s.offers.map((id, i) => {
-      const it = ITEMS[id];
-      const tags = [];
-      if (owned[id] >= 2) tags.push('🔥 합성 재료');
-      else if (owned[id]) tags.push('같은 상품 보유');
-      if (fav === it.cat) tags.push('오늘 손님 선호');
-      return `<button class="offer${coach === 1 && i === 0 ? ' hl' : ''}" data-offer="${i}">
-        <span class="cat" style="background:${CATS[it.cat].color}">${CATS[it.cat].name}</span>
-        <span class="art"><img src="${itemImg(id)}" alt=""></span>
-        <span class="nm">${s.offerGrade > 1 ? `${gradeLabel(s.offerGrade)} ` : ''}${it.name}</span>
-        <span class="meta">${it.cells.length}칸 · 기본 ${gradeBase(id, s.offerGrade)}</span>
-        <span class="eff">${effectText(id, s.offerGrade)}</span>
-        ${tags.length ? `<span class="tagline">${tags.join(' · ')}</span>` : ''}</button>`;
-    }).join('');
-    const cost = G.rerollCost(s);
-    const reroll = `<button class="small-btn${cost === 0 ? ' hot' : ''}" data-act="reroll" ${s.balance < cost ? 'disabled' : ''}>다시 뽑기 · ${cost === 0 ? (s.grace ? '유예 무료' : '무료') : `잔금 ${cost}`}</button>`;
-    panel.innerHTML = (coach ? coachHTML(coach, 'down') : '') +
-      `<div class="panel-head"><h3>입고 ${s.picksDone + 1} / ${s.picksDone + s.picksLeft}</h3>${reroll}</div><div class="offers">${cards}</div>`;
-    return;
-  }
-
+  // 정리 단계
   const extra = G.extraCost(s), expand = G.expandCost(s);
   const next = EXPAND_STEPS[s.expand];
-  panel.innerHTML = `<div class="done-line"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>오늘 입고 완료 · 상품을 눌러 옮기거나 합성할 수 있어요</div>` +
+  const blocked = G.extraBlocked(s);
+  const noble = G.nobleDealOpen(s);
+  panel.innerHTML = `<div class="done-line"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>오늘 입고 완료 · 상품을 눌러 상세·합성을 볼 수 있어요</div>` +
     `<div class="shopbar">
-      <button class="btn" data-act="extra" ${s.balance < extra ? 'disabled' : ''}>추가 입고<small>잔금 ${extra}</small></button>
+      <button class="btn" data-act="extra" ${blocked || s.balance < extra ? 'disabled' : ''}>추가 입고<small>${blocked ? '검소한 영업 중' : s.tickets ? `이용권 1장 사용` : `잔금 ${extra}${s.regulars.includes('wanderers') ? ' · 떠돌이 할인' : ''}`}</small></button>
       <button class="btn" data-act="expand" ${expand === null || s.balance < expand ? 'disabled' : ''}>${expand === null ? '진열대 최대' : '자물쇠 칸 열기'}<small>${expand === null ? `${s.dim.cols}×${s.dim.rows}` : `잔금 ${expand} · ${next.cols}×${next.rows}`}</small></button>
+      ${noble ? `<button class="btn" data-act="noble" ${s.balance < G.NOBLE_COST ? 'disabled' : ''} style="grid-column:1/-1">귀족의 소개 · 중급 입고<small>잔금 ${G.NOBLE_COST} · 오늘만</small></button>` : ''}
     </div>` + (coach === 3 ? `<div style="margin-top:14px">${coachHTML(3, 'down')}</div>` : '');
 }
 
 function renderActions(coach) {
   const main = $('btn-main');
   const cancel = $('btn-merge-cancel');
+  const reroll = $('btn-reroll');
   main.classList.remove('hl');
+  reroll.hidden = true;
+  cancel.hidden = true;
+  $('btn-rotate').hidden = false;
+  $('btn-undo').hidden = false;
   if (merging) {
     $('btn-rotate').hidden = true;
     $('btn-skip').hidden = true;
-    $('btn-undo').hidden = false;
     $('btn-undo').disabled = !G.canUndo(s);
     cancel.hidden = false;
     main.textContent = '합성하기';
     main.disabled = false;
     return;
   }
-  cancel.hidden = true;
-  $('btn-rotate').hidden = false;
-  $('btn-undo').hidden = false;
-  $('btn-rotate').disabled = !sel;
   $('btn-undo').disabled = !G.canUndo(s);
-  $('btn-skip').hidden = !(s.phase === 'pick' || s.phase === 'place');
+  if (s.phase === 'pick') {
+    $('btn-rotate').hidden = true;
+    $('btn-skip').hidden = false;
+    reroll.hidden = false;
+    const cost = G.rerollCost(s), full = G.rerollFullCost(s);
+    reroll.innerHTML = `후보 새로고침<small>${cost === 0 ? (s.grace ? '마왕의 유예 · 무료' : '무료') : `잔금 ${full !== cost ? `<s>${full}</s> ` : ''}${cost}${full !== cost ? ' · 고블린 할인' : ''}`}</small>`;
+    reroll.disabled = s.balance < cost;
+    main.textContent = pickedOffer !== null ? `${ITEMS[s.offers[pickedOffer].id].name} 고르기` : '후보를 골라 주세요';
+    main.disabled = pickedOffer === null;
+    return;
+  }
+  $('btn-rotate').disabled = !sel;
+  $('btn-skip').hidden = s.phase !== 'place';
   let label, enabled = false;
   if (ghost) {
     enabled = ghostValid();
@@ -603,7 +682,7 @@ function renderActions(coach) {
   else if (s.phase === 'arrange' && G.contractPending(s)) { enabled = true; label = '계약을 먼저 결정하세요'; main.classList.add('hl'); }
   else if (G.canOpen(s)) { enabled = true; label = '영업 시작'; if (coach === 3) main.classList.add('hl'); }
   else if (s.phase === 'place') label = '새 상품을 놓아 주세요';
-  else label = `상품 ${s.picksLeft}개를 고르면 영업 시작`;
+  else label = '영업 준비 중';
   main.textContent = label;
   main.disabled = !enabled;
 }
@@ -635,18 +714,93 @@ function confirmMerge() {
   merging = null;
   resetSelection();
   if (target === 'hand' && s.phase === 'place') sel = { kind: 'hand' };
-  save();
-  render();
+  afterAction();
 }
 
-/* ---------- 04 마왕의 계약 ---------- */
+/* ---------- 11 변이 선택 ---------- */
 
-function spanText(c, day) {
-  const span = G.CONTRACT_SPAN[c];
-  if (!span) return ['즉시', '받는 순간 끝나요'];
-  const a = day + span[0], b = day + span[1];
-  return [`${b - a + 1}일 (${a}~${b}일 차)`, `${b + 1}일 차 아침에 ${c === 'seal' ? '봉인이 풀려요' : '효과가 끝나요'}`];
+function mutWay(id, m) {
+  const t = ITEMS[id].muts[m][1];
+  if (/오는 날/.test(t)) return MUT_WAY.guest;
+  if (/하나에/.test(t)) return MUT_WAY.focus;
+  if (/마다 \+/.test(t) && !/자신/.test(t)) return MUT_WAY.aura;
+  if (/면 /.test(t)) return MUT_WAY.cond;
+  return MUT_WAY.self;
 }
+
+function showMutation() {
+  const id = s.pendingMutation;
+  const it = ITEMS[id];
+  $('mu-day').textContent = `${s.day}일 차`;
+  $('mu-status').innerHTML = statusHTML();
+  $('mu-img').src = itemImg(id);
+  $('mu-title').textContent = `${it.name} 첫 Ⅱ등급!`;
+  $('mu-lead').innerHTML = `변이를 하나 골라요. 이번 판의 <b>Ⅱ등급 이상 ${it.name} 전체</b>에 적용돼요.`;
+  const base = G.income(s).sum.total;
+  const ctx = G.ctxFor(s);
+  $('mu-list').innerHTML = ['A', 'B'].map((m) => {
+    const v = evaluate(s.pieces, { ...ctx, mutations: { ...s.mutations, [id]: m } }).sum.total - base;
+    return `<button class="mu-card${pickedMut === m ? ' sel' : ''}" data-mut="${m}"><span class="h">${hexHTML(id, m, 'hex-big')}${mutName(id, m)}</span>
+      <p>${mutText(id, m, 2)}</p><p class="way">${mutWay(id, m)}</p><p class="now">지금 진열 기준 하루 ${v >= 0 ? '+' : ''}${v}</p></button>`;
+  }).join('');
+  const btn = $('btn-mutation');
+  btn.disabled = !pickedMut;
+  btn.textContent = pickedMut ? `${mutName(id, pickedMut)}(으)로 정하기` : '변이를 골라 주세요';
+  show('mutation');
+}
+
+/* ---------- 13 단골 제안 ---------- */
+
+function showRegular() {
+  const g = s.regularOffer;
+  const c = CUSTOMERS[g];
+  $('rg-day').textContent = `${s.last?.day ?? s.day}일 차`;
+  $('rg-status').innerHTML = statusHTML();
+  const fav = s.favor[g] ?? 0;
+  $('rg-offer').innerHTML = `<div class="h"><img src="${guestImg(g)}" alt=""><div><b>${c.name}이(가) 단골이 되고 싶어 해요</b>
+    <div class="hearts">${'♥'.repeat(Math.min(fav, 6))}</div><small>오늘 방문 +1 · 방문당 최대 +1</small></div></div>
+    <dl><dt>호감 조건</dt><dd>${G.REGULAR[g].cond}</dd><dt>단골 효과</dt><dd>${G.REGULAR[g].effect}</dd></dl>`;
+  const full = s.regulars.length >= 2;
+  $('rg-slots-title').textContent = `단골 자리 ${s.regulars.length} / 2`;
+  $('rg-slots-lead').textContent = full ? '자리가 다 찼어요. 한 집단을 교체하거나 제안을 거절할 수 있어요.' : '빈자리가 있어요. 받아들이거나 거절할 수 있어요.';
+  if (full && !s.regulars.includes(swapOut)) swapOut = null;
+  $('rg-slots').innerHTML = [0, 1].map((i) => {
+    const r = s.regulars[i];
+    if (!r) return '<div class="rg-slot empty">빈자리</div>';
+    return `<button class="rg-slot${swapOut === r ? ' sel' : ''}" data-swap="${r}">${swapOut === r ? '<span class="swap">교체</span>' : ''}<img src="${guestImg(r)}" alt=""><b>${CUSTOMERS[r].name}</b><small>${G.REGULAR[r].effect}</small></button>`;
+  }).join('');
+  const acc = $('btn-rg-accept');
+  if (!full) { acc.textContent = '단골로 맞이하기'; acc.disabled = false; }
+  else { acc.textContent = swapOut ? `${SHORT[swapOut]} 대신 단골로` : '교체할 단골을 골라요'; acc.disabled = !swapOut; }
+  show('regular');
+}
+
+/* ---------- 15 결산 보상 ---------- */
+
+function showReward() {
+  $('rw-day').textContent = `${s.last?.day ?? s.day}일 차`;
+  $('rw-status').innerHTML = statusHTML();
+  const kinds = [...new Set(s.pieces.map((p) => p.id))];
+  $('rw-list').innerHTML = s.rewardOffer.map((k) => {
+    const r = G.REWARDS[k];
+    let inner = `<b>${r.name}</b><span>${r.text}</span>`;
+    if (k === 'priority' && pickedReward === 'priority') {
+      inner += `<div class="prio-grid">${kinds.map((id) => `<button data-prio="${id}" class="${pickedPrio === id ? 'sel' : ''}"><img src="${itemImg(id)}" alt="">${ITEMS[id].name}</button>`).join('')}</div>` +
+        `<span class="now">지금 지정: ${pickedPrio ? ITEMS[pickedPrio].name : s.priority ? ITEMS[s.priority].name : '없음'} · 다음 결산일(${(s.last?.day ?? s.day) + G.SETTLE_EVERY}일 차)에 바꿀 수 있어요</span>`;
+    }
+    return `<div class="rw${pickedReward === k ? ' sel' : ''}" data-reward="${k}" role="button" tabindex="0">${inner}</div>`;
+  }).join('');
+  $('rw-note').textContent = s.expand >= EXPAND_STEPS.length ? '진열대가 최대 크기라 확장 보상은 다른 보상으로 바뀌었어요.' : '';
+  const btn = $('btn-reward');
+  const ready = pickedReward && (pickedReward !== 'priority' || pickedPrio);
+  btn.disabled = !ready;
+  btn.textContent = !pickedReward ? '보상을 골라 주세요' : pickedReward === 'priority' ? (pickedPrio ? `${ITEMS[pickedPrio].name}을(를) 우선 입고로` : '상품을 골라 주세요') : `${G.REWARDS[pickedReward].name} 받기`;
+  show('reward');
+}
+
+/* ---------- 14 마왕의 계약 ---------- */
+
+const TYPE_LABEL = { instant: '⇄ 즉시 거래', period: '⧗ 기간형', cond: '◎ 조건형' };
 
 function minimap(cells) {
   const set = new Set(cells);
@@ -660,39 +814,49 @@ function minimap(cells) {
   return `${html}</div>`;
 }
 
-function showContract() {
-  if (!s.contractOffer) return;
-  if (!pickedContract || !s.contractOffer.ids.includes(pickedContract)) pickedContract = null;
-  const active = G.activeContracts(s).length;
-  $('c-count').textContent = `진행 중 ${active} / 2`;
+function todayImpact(id) {
   const pay = G.payFor(s), sales = G.income(s).sum.total;
+  const trial = JSON.parse(JSON.stringify(s));
+  trial.undo = [];
+  if (!G.sign(trial, id)) return '';
+  const tPay = G.payFor(trial), tSales = G.income(trial).sum.total;
+  const parts = [];
+  if (tSales !== sales) parts.push(`하루 예상 매출 ${tSales - sales > 0 ? '+' : ''}${tSales - sales}`);
+  if (tPay !== pay) parts.push(`납부액 ${fmt(pay)} → ${fmt(tPay)}`);
+  if (!parts.length) parts.push('오늘 매출·납부액 변화 없음');
+  return parts.join(' · ');
+}
+
+function showContract() {
+  if (!s.contractOffer) return backFromContract();
+  const active = G.activeContracts(s).length;
+  $('c-day').textContent = `${s.day}일 차`;
+  $('c-status').innerHTML = statusHTML();
+  $('c-count').textContent = `기간·조건 계약 ${active} / 2`;
   $('c-list').innerHTML = s.contractOffer.ids.map((id) => {
-    const c = G.CONTRACTS[id];
+    const t = G.CONTRACTS[id];
+    const d = s.contractOffer.data[id];
+    const desc = G.describeContract(s, id, d);
     const can = G.canSign(s, id);
-    if (id !== pickedContract) {
-      return `<button class="c-item${can.ok ? '' : ' no'}" data-pick="${id}"><div><b>${c.name}</b><small>${c.gain} · ${c.cost}</small></div><span class="chev">›</span></button>`;
+    let dl = '', foot = '';
+    if (t.type === 'instant') {
+      dl = `<dt>받는 것</dt><dd>${desc.gain}</dd><dt>지불</dt><dd>${desc.cost}</dd><dt>오늘</dt><dd>${todayImpact(id)}</dd>`;
+      foot = '<p class="foot">바로 처리되고 계약 자리는 차지하지 않아요</p>';
+    } else if (t.type === 'period') {
+      const [a, b] = t.span;
+      dl = `<dt>받는 것</dt><dd>${desc.gain}</dd><dt>대가</dt><dd>${desc.cost}</dd><dt>기간</dt><dd>${a === 0 ? '오늘' : `${s.day + a}일 차`}부터 ${s.day + b}일 차까지</dd><dt>오늘</dt><dd>${todayImpact(id)}</dd>`;
+      if (id === 'debt') foot = '<p class="foot red">이 계약으로 상환을 다시 미룰 수는 없어요</p>';
+      if (id === 'seal') foot = `<div class="mm">${minimap(d.cells)}<span>빨간 칸 3개가 ${s.day + b + 1}일 차 아침까지 봉인돼요</span></div>`;
+    } else {
+      const left = t.span[1] + 1;
+      dl = `<dt>계약금</dt><dd>잔금 ${t.deposit}, 지금 지불</dd><dt>조건</dt><dd>남은 ${left}번 영업 중 ${desc.cond}</dd><dt>마감</dt><dd>${s.day + t.span[1]}일 차</dd><dt>성공</dt><dd>${desc.gain}</dd>`;
+      foot = '<p class="foot green">실패하면 계약금만 잃어요</p>';
     }
-    const [period, end] = spanText(id, s.day);
-    const trial = JSON.parse(JSON.stringify(s));
-    trial.undo = [];
-    let today = '';
-    if (G.sign(trial, id)) {
-      const tPay = G.payFor(trial), tSales = G.income(trial).sum.total;
-      const lines = [`납부액 ${fmt(pay)} → <b>${fmt(tPay)}</b>`, `예상 매출 ${fmt(tSales)}${tSales === sales ? ' (변화 없음)' : ` (${tSales - sales > 0 ? '+' : ''}${tSales - sales})`}`];
-      if (trial.balance !== s.balance) lines.push(`잔금 ${fmt(s.balance)} → ${fmt(trial.balance)}`);
-      if (trial.lives !== s.lives) lines.push(`영혼의 불꽃 ${s.lives} → ${trial.lives}`);
-      if (trial.picksLeft !== s.picksLeft) lines.push(`오늘 입고 ${trial.picksLeft - s.picksLeft}번 추가`);
-      const verdict = sales < pay && tSales >= tPay ? '<span class="ok">납부 가능해져요</span>' : tSales < tPay ? '아직 납부액에 모자라요' : '';
-      today = `<div class="today">${id === 'seal' ? minimap(s.contractOffer.cells) : ''}<div><b class="h">오늘 예상</b>${lines.join('<br>')}${verdict ? `<br>${verdict}` : ''}</div></div>`;
-    }
-    return `<div class="c-open"><button class="x" data-pick="" aria-label="선택 취소"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-      <div class="k">선택한 계약</div><h3>${c.name}</h3>
-      <dl><dt>받는 것</dt><dd class="gain">${c.gain}</dd><dt>대가</dt><dd class="cost">${c.cost}</dd><dt>기간</dt><dd>${period}</dd><dt>끝나면</dt><dd>${end}</dd></dl>
-      ${today}${can.ok ? '' : `<p class="why">${can.why}</p>`}</div>`;
+    return `<div class="ccard${pickedContract === id ? ' sel' : ''}${can.ok ? '' : ' no'}" data-pick="${id}" role="button" tabindex="0">
+      <div class="h"><span class="ctype ${t.type}">${TYPE_LABEL[t.type]}</span><b>${t.name}</b></div><dl>${dl}</dl>${foot}${can.ok ? '' : `<p class="why">${can.why}</p>`}</div>`;
   }).join('');
   const sign = $('btn-sign');
-  const ok = pickedContract && G.canSign(s, pickedContract).ok;
-  sign.disabled = !ok;
+  sign.disabled = !(pickedContract && G.canSign(s, pickedContract).ok);
   sign.textContent = pickedContract ? `${G.CONTRACTS[pickedContract].name}에 서명` : '계약을 골라 주세요';
   show('contract');
 }
@@ -727,14 +891,14 @@ function showJudge(fromSave = false) {
   const cust = CUSTOMERS[st.customer];
   $('j-title').textContent = `${st.day}일 차 납부`;
   const short = st.pay - st.sales;
-  const contract = st.sum.contract + st.sum.perma;
   $('receipt').innerHTML = `<h4>오늘 매출 명세</h4>
     <div class="row"><span>상품 기본 매출</span><b>${fmt(st.sum.base)}</b></div>
     <div class="row"><span>배치 조합 보너스</span><b>${st.sum.place >= 0 ? '+' : ''}${fmt(st.sum.place)}</b></div>
+    <div class="row"><span>변이 효과</span><b>${st.sum.mut > 0 ? '+' : ''}${fmt(st.sum.mut)}</b></div>
     <div class="row"><span>특별 손님 · ${cust.name}</span><b>+${fmt(st.sum.customer)}</b></div>
-    <div class="row"><span>계약 · 성장 효과</span><b>${contract > 0 ? '+' : ''}${fmt(contract)}</b></div>
+    <div class="row"><span>계약 · 성장 효과</span><b>${st.sum.contract > 0 ? '+' : ''}${fmt(st.sum.contract)}</b></div>
     <hr><div class="row big"><span>오늘 매출</span><b data-count="${st.sales}">${fromSave ? fmt(st.sales) : 0}</b></div>
-    <div class="row big"><span>납부액</span><b>${fmt(st.pay)}</b></div>
+    <div class="row big"><span>납부액${st.debt ? ' (빚 상환 포함)' : ''}</span><b>${fmt(st.pay)}</b></div>
     <span class="r-stamp ${st.ok ? 'ok' : 'fail'}">${st.ok ? '완납' : `${fmt(short)} 부족 · 미납`}</span>`;
   $('j-flames').innerHTML = flamesHTML(st.lives, !st.ok);
   if (st.ok) {
@@ -751,32 +915,36 @@ function showJudge(fromSave = false) {
     ? (st.settle ? '결산일까지 버티다니, 제법이군. 선물을 하나 고르게.' : st.sales >= st.pay * 1.5 ? '흠, 넉넉하군. 내일은 조금 더 올려도 되겠어.' : '좋아, 받았네. 내일 또 보세.')
     : st.lives <= 0 ? '자, 열쇠를 돌려받겠네. 즐거운 거래였어.' : `겨우 ${fmt(short)} 모자라다니. 내일 갚겠다고? 좋아, 이번만 봐주지.`;
 
-  const extra = $('j-extra');
-  const next = $('btn-judge-next');
-  if (s.phase === 'reward') {
-    extra.innerHTML = `<div class="gain-card"><span>잔금 +${fmt(st.gain)}</span><b>${fmt(s.balance)}</b></div><div class="rewards"><h3>결산 보상 고르기</h3>${s.rewardOffer.map((k) =>
-      `<button class="reward" data-reward="${k}"><b>${G.REWARDS[k].name}</b><span>${G.REWARDS[k].text}</span></button>`).join('')}</div>`;
-    next.hidden = true;
-  } else {
-    next.hidden = false;
-    if (s.phase === 'over') {
-      extra.innerHTML = '';
-      next.textContent = '압류 통지서 받기';
-    } else {
-      extra.innerHTML = st.ok
-        ? `<div class="gain-card"><span>잔금 +${fmt(st.gain)}</span><b>${fmt(s.balance)}</b></div>`
-        : `<div class="grace"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg><div><b>마왕의 유예를 받았어요</b>${s.day}일 차에 상품 후보 전체를 한 번 무료로 다시 뽑을 수 있어요. 그날이 끝나면 사라져요.</div></div>`;
-      next.textContent = `${s.day}일 차 아침으로`;
-    }
+  const notes = [];
+  if (st.favorGain) notes.push(`<div class="j-note good"><img src="${guestImg(st.favorGain)}" alt="">${CUSTOMERS[st.favorGain].name} 호감도 +1 <span class="hearts">${'♥'.repeat(Math.min(s.favor[st.favorGain] ?? 0, 6))}</span>${s.regularOffer === st.favorGain ? ' · 단골 제안이 왔어요' : ''}</div>`);
+  for (const r of st.condResults ?? []) {
+    const t = G.CONTRACTS[r.id];
+    if (r.result === 'success') notes.push(`<div class="j-note good">◎ ${t.name} 달성! ${G.describeContract(s, r.id, {}).gain}</div>`);
+    else if (r.result === 'fail') notes.push(`<div class="j-note bad">◎ ${t.name} 실패 · 계약금만 잃었어요</div>`);
+    else notes.push(`<div class="j-note">◎ ${t.name} 진행 ${r.progress} / ${t.need}</div>`);
   }
+  if (st.forfeited) notes.push('<div class="j-note bad">불꽃 되찾기 계약으로 이번 결산 보상을 포기했어요</div>');
+  let extra = notes.length ? `<div class="j-notes">${notes.join('')}</div>` : '';
+  const next = $('btn-judge-next');
+  if (s.phase === 'over') next.textContent = '압류 통지서 받기';
+  else {
+    extra += st.ok
+      ? `<div class="gain-card"><span>잔금 +${fmt(st.gain)}</span><b>${fmt(s.balance)}</b></div>`
+      : `<div class="grace"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg><div><b>마왕의 유예를 받았어요</b>${s.day}일 차에 상품 후보 전체를 한 번 무료로 다시 뽑을 수 있어요. 그날이 끝나면 사라져요.</div></div>`;
+    next.textContent = s.phase === 'reward' ? '결산 보상 고르기' : s.regularOffer ? '단골 제안 보기' : `${s.day}일 차 아침으로`;
+  }
+  $('j-extra').innerHTML = extra;
   show('judge');
   if (!fromSave) {
     const n = Math.min(Object.keys(st.perItem).length, 12);
     for (let i = 0; i < n; i++) S.play('coin_tick', { delay: 0.3 + i * 0.07, rate: 1 + Math.min(i, 10) * 0.03 });
-    const t = 0.4 + n * 0.07;
+    let t = 0.4 + n * 0.07;
     if (st.ok) S.play('pay_success', { delay: t });
     else { S.play('pay_fail', { delay: t }); S.play('flame_out', { delay: t + 0.6 }); }
-    if (s.phase === 'over') S.play('seized', { delay: t + 1.4 });
+    t += 1.2;
+    for (const r of st.condResults ?? []) { S.play(r.result === 'success' ? 'condition_success' : r.result === 'fail' ? 'condition_fail' : 'condition_check', { delay: t }); t += 0.5; }
+    if (st.favorGain) S.play('favor_up', { delay: t });
+    if (s.phase === 'over') S.play('seized', { delay: t + 0.4 });
     countUp($('receipt').querySelector('[data-count]'), st.sales);
   }
 }
@@ -789,22 +957,18 @@ function countUp(el, to) {
     if (judgeAnim !== token) { el.textContent = fmt(to); return; }
     const k = Math.min(1, (t - t0) / 900);
     el.textContent = fmt(Math.round(to * k));
-    if (k < 1) requestAnimationFrame(step);
+    if (k < 1) requestAnimationFrame(step); else judgeAnim = null;
   };
   requestAnimationFrame(step);
 }
 
-function skipJudgeAnim() {
-  judgeAnim = null;
-  const el = $('receipt').querySelector('[data-count]');
-  if (el) el.textContent = fmt(+el.dataset.count);
-}
-
 function finishJudge() {
-  if (s.phase === 'reward') return;
   judgeAnim = null;
   if (s.phase === 'over') return showResult();
   resetSelection();
+  pickedReward = null; pickedPrio = null; swapOut = null;
+  if (s.phase === 'reward') S.play('reward_pick');
+  else if (s.regularOffer) S.play('regular_offer');
   route();
 }
 
@@ -854,7 +1018,7 @@ function celebrate() {
 async function saveCard() {
   const url = `${location.host}${location.pathname.replace(/index\.html$/, '')}`.replace(/\/$/, '');
   const sum = G.summary(s);
-  const canvas = await drawCard({ dim: s.dim, pieces: s.pieces, days: sum.days, total: s.total, bestDay: s.bestDay, signed: s.signed, nickname: sum.nickname, url });
+  const canvas = await drawCard({ dim: s.dim, pieces: s.pieces, mutations: s.mutations, days: sum.days, total: s.total, bestDay: s.bestDay, signed: s.signed, nickname: sum.nickname, url });
   const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
   const href = URL.createObjectURL(blob);
   $('card-img').src = href;
@@ -876,12 +1040,13 @@ function cellFromPoint(ev) {
 
 const inPiece = (p, x, y) => p && cellsOf(p).some((c) => c[0] === x && c[1] === y);
 const isLocked = (x, y) => x >= s.dim.cols || y >= s.dim.rows;
+const clampToDim = (x, y) => ({ x: Math.min(x, s.dim.cols - 1), y: Math.min(y, s.dim.rows - 1) });
 
 function onTap(x, y) {
   if (merging) return;
   if (isLocked(x, y)) {
     const cost = G.expandCost(s);
-    toast(cost === null ? '더 넓힐 수 없어요' : `잔금 ${cost}으로 자물쇠 칸을 열 수 있어요 (영업 준비가 끝난 뒤)`);
+    toast(cost === null ? '더 넓힐 수 없어요' : `잔금 ${cost}으로 자물쇠 칸을 열 수 있어요 (오늘 입고를 마친 뒤)`);
     return;
   }
   const occ = occupancy(s.dim, s.pieces)[y][x];
@@ -902,10 +1067,6 @@ function onTap(x, y) {
   const c = clampToDim(x, y);
   setGhostAt(c.x, c.y, currentRot());
   render();
-}
-
-function clampToDim(x, y) {
-  return { x: Math.min(x, s.dim.cols - 1), y: Math.min(y, s.dim.rows - 1) };
 }
 
 let drag = null;
@@ -934,7 +1095,8 @@ function onPointerMove(ev) {
     } else { drag.dead = true; }
   }
   if (drag.dead) return;
-  const c = clampToDim(...Object.values(cellFromPoint(ev)));
+  const pt = cellFromPoint(ev);
+  const c = clampToDim(pt.x, pt.y);
   const before = ghost && `${ghost.x},${ghost.y},${ghost.rot}`;
   ghost = { ...clampAnchor(s.dim, selectedId(), drag.rot, c.x - drag.grab[0], c.y - drag.grab[1]), rot: drag.rot };
   if (`${ghost.x},${ghost.y},${ghost.rot}` !== before) render();
@@ -976,13 +1138,13 @@ function discardSelected() {
 }
 
 function act(fn, sound) {
-  if (fn(s)) { if (sound) S.play(sound); resetSelection(); save(); render(); return true; }
+  if (fn(s)) { if (sound) S.play(sound); resetSelection(); afterAction(); return true; }
   return false;
 }
 
 function undo() {
   if (merging) { merging = null; render(); return; }
-  if (G.undo(s)) { S.play('undo'); resetSelection(); save(); render(); }
+  if (G.undo(s)) { S.play('undo'); resetSelection(); save(); route(); }
 }
 
 let toastTimer = 0;
@@ -1008,17 +1170,15 @@ function bind() {
 
   const onAct = (e) => {
     const offer = e.target.closest('[data-offer]');
-    if (offer) {
-      G.choose(s, +offer.dataset.offer);
-      S.play('item_pick');
-      select({ kind: 'hand' });
-      save();
-      return render();
-    }
+    if (offer) { pickedOffer = +offer.dataset.offer; S.play('ui_tap'); return render(); }
     const go = e.target.closest('[data-go]');
     if (go) {
       if (go.dataset.go === 'contract') openContract();
-      if (go.dataset.go === 'contract-info') { const c = G.CONTRACTS[go.dataset.c]; toast(`${c.name} · 받는 것: ${c.gain} · 대가: ${c.cost}`); }
+      if (go.dataset.go === 'contract-info') {
+        const c = s.contracts.find((x) => x.id === go.dataset.c);
+        const d = G.describeContract(s, go.dataset.c, c?.data);
+        toast(`${G.CONTRACTS[go.dataset.c].name} · ${d.cond ? `조건: ${d.cond} · ` : ''}받는 것: ${d.gain} · 대가: ${d.cost}`);
+      }
       return;
     }
     const btn = e.target.closest('[data-act]');
@@ -1028,53 +1188,107 @@ function bind() {
     if (a === 'hold') { select({ kind: 'hand' }); render(); }
     if (a === 'discard') discardSelected();
     if (a === 'merge-preview') startMerge();
-    if (a === 'reroll') act(G.reroll, 'reroll');
-    if (a === 'extra') act(G.buyExtra, 'item_pick');
+    if (a === 'extra') act(G.buyExtra, 'restock_new');
+    if (a === 'noble') act(G.buyNoble, 'restock_new');
     if (a === 'expand' && act(G.buyExpand, 'reward_pick')) toast(`진열대가 ${s.dim.cols}×${s.dim.rows}로 넓어졌어요`);
   };
   $('panel').addEventListener('click', onAct);
   $('p-chips').addEventListener('click', onAct);
   $('m-contracts').addEventListener('click', onAct);
+  $('strip-head').onclick = () => { stripOpen = !stripOpen; renderStrip(); };
 
   $('c-list').addEventListener('click', (e) => {
     const b = e.target.closest('[data-pick]');
     if (!b) return;
-    pickedContract = b.dataset.pick || null;
+    pickedContract = pickedContract === b.dataset.pick ? null : b.dataset.pick;
     showContract();
   });
   $('btn-sign').onclick = () => {
     const id = pickedContract;
     if (!id || !G.sign(s, id)) return;
-    S.play('contract_sign');
+    const type = G.CONTRACTS[id].type;
+    S.play(type === 'instant' ? 'sign_instant' : type === 'period' ? 'sign_period' : 'sign_condition');
     toast(`계약 체결: ${G.CONTRACTS[id].name}`);
     resetSelection();
     save();
+    if (s.pendingMutation) return route();
     backFromContract();
   };
   $('btn-refuse').onclick = () => { G.refuseContracts(s); S.play('contract_reject'); save(); backFromContract(); };
   $('btn-contract-close').onclick = () => {
-    if (s.phase === 'arrange' && G.contractPending(s)) toast('오늘 영업 전에 서명하거나 모두 거절해야 해요');
+    if (G.contractPending(s)) toast('오늘 영업 전에 서명하거나 모두 거절해야 해요');
     backFromContract();
   };
 
-  $('btn-go-shelf').onclick = leaveMorning;
-  $('j-extra').addEventListener('click', (e) => {
+  $('mu-list').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mut]');
+    if (!b) return;
+    pickedMut = b.dataset.mut;
+    S.play(pickedMut === 'A' ? 'mutation_choose_a' : 'mutation_choose_b');
+    showMutation();
+  });
+  $('btn-mutation').onclick = () => {
+    const id = s.pendingMutation;
+    if (!pickedMut || !G.chooseMutation(s, pickedMut)) return;
+    toast(`변이 확정: ${ITEMS[id].name} · ${mutName(id, pickedMut)}`);
+    pickedMut = null;
+    save();
+    resetSelection();
+    route();
+  };
+
+  $('rg-slots').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-swap]');
+    if (!b) return;
+    swapOut = swapOut === b.dataset.swap ? null : b.dataset.swap;
+    showRegular();
+  });
+  $('btn-rg-accept').onclick = () => {
+    const swapped = s.regulars.length >= 2;
+    if (!G.acceptRegular(s, swapOut)) return;
+    S.play(swapped ? 'regular_swap' : 'regular_join');
+    swapOut = null;
+    save();
+    route();
+  };
+  $('btn-rg-refuse').onclick = () => { G.refuseRegular(s); S.play('contract_reject'); swapOut = null; save(); route(); };
+
+  $('rw-list').addEventListener('click', (e) => {
+    const pr = e.target.closest('[data-prio]');
+    if (pr) { pickedPrio = pr.dataset.prio; S.play('priority_set'); return showReward(); }
     const b = e.target.closest('[data-reward]');
     if (!b) return;
-    G.takeReward(s, b.dataset.reward);
-    S.play('reward_pick');
+    pickedReward = b.dataset.reward;
+    if (pickedReward !== 'priority') pickedPrio = null;
+    showReward();
+  });
+  $('btn-reward').onclick = () => {
+    if (!G.takeReward(s, pickedReward, pickedPrio)) return;
+    S.play(pickedReward === 'priority' ? 'priority_set' : 'reward_pick');
+    pickedReward = null; pickedPrio = null;
     resetSelection();
     save();
     route();
-  });
-  $('btn-judge-skip').onclick = () => { if (judgeAnim) skipJudgeAnim(); else finishJudge(); };
+  };
+
+  $('btn-go-shelf').onclick = leaveMorning;
+  $('btn-judge-skip').onclick = () => { if (judgeAnim) { judgeAnim = null; } else finishJudge(); };
   $('btn-judge-next').onclick = finishJudge;
 
   $('btn-rotate').onclick = rotate;
   $('btn-undo').onclick = undo;
   $('btn-skip').onclick = () => act(G.skip);
+  $('btn-reroll').onclick = () => { pickedOffer = null; act(G.reroll, 'reroll'); };
   $('btn-merge-cancel').onclick = () => { merging = null; render(); };
   $('btn-main').onclick = () => {
+    if (s.phase === 'pick' && pickedOffer !== null) {
+      G.choose(s, pickedOffer);
+      pickedOffer = null;
+      S.play('item_pick');
+      select({ kind: 'hand' });
+      save();
+      return render();
+    }
     if (merging) confirmMerge();
     else if (ghost) commit();
     else if (s.phase === 'arrange' && G.contractPending(s)) openContract();
@@ -1115,7 +1329,7 @@ function bind() {
   document.addEventListener('click', (e) => {
     const b = e.target.closest('button, a.btn');
     if (!b || b.disabled) return;
-    if (b.matches('.cell, .offer, #btn-rotate, #btn-undo, #btn-main, #btn-sound, #btn-sign, #btn-refuse, #btn-new, #btn-again, [data-act], [data-go], [data-reward]')) return;
+    if (b.matches('.cell, .orow, #btn-rotate, #btn-undo, #btn-main, #btn-sound, #btn-sign, #btn-refuse, #btn-new, #btn-again, #btn-reroll, #btn-mutation, #btn-reward, #btn-rg-accept, #btn-rg-refuse, [data-act], [data-go], [data-mut], [data-prio]')) return;
     S.play('ui_tap');
   }, true);
 
@@ -1136,10 +1350,11 @@ function fillHelp() {
   $('help-items').innerHTML = ITEM_IDS.map((id) => {
     const it = ITEMS[id];
     return `<div class="help-item"><div class="pic"><img src="${itemImg(id)}" alt=""></div>
-      <b>${it.name}</b><div class="meta">${CATS[it.cat].name} · ${it.cells.length}칸 · 기본 ${it.base}</div><div>${effectText(id, 1)}</div></div>`;
+      <b>${it.name}</b><div class="meta">${CATS[it.cat].name} · ${it.cells.length}칸 · 기본 ${it.base}</div><div>${effectText(id, 1)}</div>
+      <div class="meta" style="margin-top:4px">변이 ${hexHTML(id, 'A', 'hex-big')} ${mutName(id, 'A')} / ${hexHTML(id, 'B', 'hex-big')} ${mutName(id, 'B')}</div></div>`;
   }).join('');
   $('help-guests').innerHTML = Object.entries(CUSTOMERS).map(([id, c]) =>
-    `<div><img src="${guestImg(id)}" alt=""><span><b>${c.name}</b>${c.text}</span></div>`).join('');
+    `<div><img src="${guestImg(id)}" alt=""><span><b>${c.name}</b>${c.text}<br><small>호감 조건: ${G.REGULAR[id].cond} · 단골 효과: ${G.REGULAR[id].effect}</small></span></div>`).join('');
 }
 
 fillHelp();

@@ -21,7 +21,7 @@ function spots(s, id, g) {
 // 아무 후보나 골라 처음 빈 곳에 놓는다. 합성·잔금·계약은 쓰지 않는다.
 function casual(s, rand) {
   if (s.phase === 'pick') {
-    G.choose(s, Math.floor(rand() * 3));
+    G.choose(s, Math.floor(rand() * s.offers.length));
     const sp = spots(s, s.hand.id, s.hand.g)[0];
     if (sp) G.placeHand(s, sp.x, sp.y, sp.rot); else G.skip(s);
   }
@@ -30,8 +30,9 @@ function casual(s, rand) {
 // 오늘 매출이 가장 크게 오르는 후보·위치를 고른다. 자리가 부족하면 합성하고, 잔금으로 확장·추가 입고.
 function greedy(s) {
   if (s.phase === 'reward') {
-    const pref = ['expand', 'life', 'perma_gear', 'perma_magic', 'perma_alch', 'cash', 'grade'];
-    G.takeReward(s, pref.find((k) => s.rewardOffer.includes(k)));
+    const pref = ['expand', 'life', 'perma_gear', 'perma_magic', 'perma_alch', 'cash', 'grade', 'priority'];
+    const k = pref.find((r) => s.rewardOffer.includes(r));
+    G.takeReward(s, k, k === 'priority' ? s.pieces[0].id : null);
     return;
   }
   if (s.contractOffer) G.refuseContracts(s);
@@ -43,7 +44,7 @@ function greedy(s) {
   }
   if (s.phase === 'pick') {
     let best = null;
-    s.offers.forEach((id, i) => {
+    s.offers.forEach(({ id }, i) => {
       for (const sp of spots(s, id, s.offerGrade)) {
         const v = G.income(s, [...s.pieces, sp]).sum.total;
         if (!best || v > best.v) best = { v, i, sp };
@@ -51,7 +52,7 @@ function greedy(s) {
     });
     if (!best) {
       // 합성 재료가 되면 받아서 합성
-      const i = s.offers.findIndex((id) => s.pieces.filter((p) => p.id === id && p.g === s.offerGrade).length >= 2);
+      const i = s.offers.findIndex(({ id }) => s.pieces.filter((p) => p.id === id && p.g === s.offerGrade).length >= 2);
       if (i >= 0) { G.choose(s, i); G.merge(s, 'hand'); const sp = spots(s, s.hand.id, s.hand.g)[0]; if (sp) G.placeHand(s, sp.x, sp.y, sp.rot); else G.skip(s); }
       else G.skip(s);
       return;
@@ -70,8 +71,10 @@ function play(seed, bot) {
   let guard = 0;
   while (s.phase !== 'over' && s.day <= MAX_DAY && guard++ < 20000) {
     if (s.contractOffer) G.refuseContracts(s);
+    if (s.pendingMutation) G.chooseMutation(s, 'A');
+    if (s.regularOffer) { if (s.regulars.length < 2) G.acceptRegular(s); else G.refuseRegular(s); }
     if (s.phase === 'arrange' && (bot === casual || s.balance < G.extraCost(s) + 25)) { G.openShop(s); continue; }
-    if (s.phase === 'reward' && bot === casual) { G.takeReward(s, s.rewardOffer[0]); continue; }
+    if (s.phase === 'reward' && bot === casual) { const k = s.rewardOffer.find((r) => r !== 'priority') ?? 'priority'; G.takeReward(s, k, s.pieces[0]?.id); continue; }
     if (s.phase === 'place') { G.skip(s); continue; }
     bot(s, rand);
   }

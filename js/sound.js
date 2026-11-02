@@ -7,6 +7,11 @@ const SFX = {
   merge_ready: 1, merge_complete: 1, contract_open: 1, contract_sign: 1, contract_reject: 1,
   open_shop: 1, coin_tick: 5, pay_success: 1, pay_fail: 1, flame_out: 1, settlement_toll: 1,
   reward_pick: 1, seized: 1, demon_voice: 3,
+  // 확장판: 조건형 계약, 빚 상환, 호감·단골, 변이, 우선 입고, 새 후보, 계약 유형별 서명, 효과 연결 표시
+  condition_check: 1, condition_fail: 1, condition_success: 1, debt_due: 1, favor_up: 1, link_highlight: 1,
+  mutation_choose_a: 1, mutation_choose_b: 1, mutation_open: 1, priority_set: 1,
+  regular_join: 1, regular_offer: 1, regular_swap: 1, restock_new: 1,
+  sign_condition: 1, sign_instant: 1, sign_period: 1,
 };
 const VOLUME = { sfx: 0.8, bgm: 0.32 };
 

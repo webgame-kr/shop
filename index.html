@@ -62,11 +62,13 @@
         <button class="round" id="btn-menu" aria-label="메뉴"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       </header>
       <div class="gauge" id="gauge">
-        <div class="g-head"><span>예상 매출 / 납부액</span><b><span id="g-sales"></span> <small>/ <span id="g-pay"></span></small></b></div>
+        <div class="g-head"><span>목표 <b id="g-pay"></b> · 예상 <b class="gold" id="g-sales"></b></span><span class="g-note" id="g-note"></span></div>
         <div class="g-bar"><i class="fill" id="g-fill"></i><i class="short" id="g-short"></i></div>
-        <p class="g-note" id="g-note"></p>
       </div>
-      <div class="chips" id="p-chips"></div>
+      <div class="strip" id="strip">
+        <button class="strip-head" id="strip-head" aria-expanded="false"><span id="strip-sum"></span><span class="strip-tog"><span id="strip-word">펼치기</span> <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span></button>
+        <div class="chips" id="p-chips" hidden></div>
+      </div>
       <div class="shelf"><div class="board" id="board"></div></div>
       <div id="panel" class="panel" aria-live="polite"></div>
       <nav class="actions" id="p-actions">
@@ -74,15 +76,16 @@
         <button class="sq" id="btn-undo" aria-label="되돌리기"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
         <button class="sq" id="btn-skip" aria-label="이번 입고 넘기기"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
         <button class="btn outline main" id="btn-merge-cancel" hidden>합성 취소</button>
+        <button class="btn outline main reroll" id="btn-reroll" hidden></button>
         <button class="btn primary main" id="btn-main"></button>
       </nav>
     </section>
 
     <!-- 04 마왕의 계약 -->
     <section id="screen-contract" class="screen contract-screen" hidden>
-      <header class="top"><h2 class="ttl"><b>마왕의 계약 제안</b></h2><span class="status" id="c-count"></span>
-        <button class="pill" id="btn-contract-close">나중에</button></header>
-      <p class="lead">하나를 고르거나 모두 거절할 수 있어요. 작은 글씨는 없습니다.</p>
+      <header class="top"><h2 class="ttl"><b id="c-day"></b> <small>계약 제안</small></h2><div class="status" id="c-status"></div></header>
+      <div class="c-title"><h3>마왕의 계약 제안</h3><span id="c-count"></span></div>
+      <p class="lead">하나를 고르거나 모두 거절할 수 있어요. 작은 글씨는 없습니다. <button class="link" id="btn-contract-close">나중에 보기</button></p>
       <div class="c-list" id="c-list"></div>
       <div class="actions two">
         <button class="btn outline main" id="btn-refuse">모두 거절</button>
@@ -100,6 +103,40 @@
       <div class="demon-say"><img src="img/demon.png" alt=""><p id="j-line"></p></div>
       <div id="j-extra"></div>
       <div class="actions solo"><button class="btn primary big" id="btn-judge-next"></button></div>
+    </section>
+
+    <!-- 11 변이 선택 -->
+    <section id="screen-mutation" class="screen mutation" hidden>
+      <header class="top"><h2 class="ttl"><b id="mu-day"></b> <small>상점 정리</small></h2><div class="status" id="mu-status"></div></header>
+      <div class="mu-hero"><span class="mu-art"><img id="mu-img" src="" alt=""></span><h2 id="mu-title"></h2><p id="mu-lead"></p></div>
+      <div class="mu-list" id="mu-list"></div>
+      <p class="fine" id="mu-note">Ⅰ등급에는 효과가 없어요. 기존 상품 효과는 그대로 두고 변이 효과가 더해져요. 다음 판에서는 다시 고를 수 있어요.</p>
+      <div class="actions solo"><button class="btn primary big" id="btn-mutation" disabled>변이를 골라 주세요</button></div>
+    </section>
+
+    <!-- 13 단골 제안 -->
+    <section id="screen-regular" class="screen regular" hidden>
+      <header class="top"><h2 class="ttl"><b id="rg-day"></b> <small>영업 후</small></h2><div class="status" id="rg-status"></div></header>
+      <h3 class="scr-title">단골 제안</h3>
+      <div class="rg-offer" id="rg-offer"></div>
+      <div class="sect"><h3 id="rg-slots-title"></h3></div>
+      <p class="fine" id="rg-slots-lead"></p>
+      <div class="rg-slots" id="rg-slots"></div>
+      <p class="fine">단골은 이번 판에서만 유지돼요. 불꽃을 잃거나 매출이 부진해도 떠나지 않아요.</p>
+      <div class="actions two">
+        <button class="btn outline main" id="btn-rg-refuse">거절</button>
+        <button class="btn primary main" id="btn-rg-accept"></button>
+      </div>
+    </section>
+
+    <!-- 15 결산 보상 -->
+    <section id="screen-reward" class="screen reward-screen" hidden>
+      <header class="top"><h2 class="ttl"><b id="rw-day"></b> <small>결산</small></h2><div class="status" id="rw-status"></div></header>
+      <h3 class="scr-title gold">결산일 납부 성공</h3>
+      <p class="fine">성장 보상 셋 중 하나를 골라요.</p>
+      <div class="rw-list" id="rw-list"></div>
+      <p class="fine" id="rw-note"></p>
+      <div class="actions solo"><button class="btn primary big" id="btn-reward" disabled>보상을 골라 주세요</button></div>
     </section>
 
     <!-- 06 압류 통지서 -->
@@ -131,10 +168,13 @@
       <li>잔금으로 후보 다시 뽑기, 추가 입고, 진열대 확장(자물쇠 칸, 최대 7×6)을 살 수 있어요.</li>
       <li>불꽃이 꺼진 다음 날엔 <b>마왕의 유예</b>로 후보를 무료로 한 번 다시 뽑을 수 있어요.</li>
       <li>5일마다 <b>결산일</b>: 납부액이 높지만, 성공하면 성장 보상 셋 중 하나를 골라요.</li>
-      <li>3일, 8일, 13일…에는 마왕이 계약을 제안해요. 받을지는 자유예요. 동시에 두 개까지.</li>
+      <li><b>변이</b>: 한 상품 종류가 처음 Ⅱ등급이 되면 두 변이 중 하나를 골라요. 그 판 동안 그 종류의 Ⅱ등급 이상 전체에 적용돼요.</li>
+      <li><b>단골</b>: 특별 손님의 선호 조건을 채운 채 영업하면 호감도가 올라요(방문당 최대 1). 쌓이면 단골 제안이 오고, 최대 두 집단까지. 불꽃을 잃어도 떠나지 않아요.</li>
+      <li><b>계약</b>: 3일, 6일, 8일, 11일…에 즉시 거래·기간형·조건형에서 하나씩 제안돼요. 서명하거나 모두 거절해야 그날 영업할 수 있어요. 기간형·조건형은 합쳐서 두 개까지, 조건형은 실패해도 계약금만 잃어요.</li>
+      <li><b>우선 입고</b>: 결산 보상으로 상품 한 종류를 고르면 후보에 더 자주 나와요(보장은 아니에요).</li>
       <li>영업 전까지는 되돌리기로 오늘 한 일을 되돌릴 수 있어요.</li>
     </ul>
-    <h3>상품 15종</h3>
+    <h3>상품 24종</h3>
     <div id="help-items" class="help-items"></div>
     <h3>특별 손님</h3>
     <div id="help-guests" class="help-guests"></div>
