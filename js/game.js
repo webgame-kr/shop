@@ -78,9 +78,20 @@ export function modsFor(s, day = s.day) {
   return { mods, pay, picks, sealed };
 }
 
+// 기간 효과가 걸리는 날: 서명한 날 기준 [시작, 끝] (상대 일수). null이면 즉시 효과만.
+export const CONTRACT_SPAN = {
+  rush: [1, 3], redsign: [0, 2], seal: [0, 2], goblinloan: [1, 3], overtime: [0, 3],
+  accountant: [0, 2], lifebond: [1, 5], witchsale: [0, 2], soul: null, miracle: null,
+};
+
 export function contractActive(s, c, day = s.day) {
-  const last = { rush: 3, redsign: 2, seal: 2, goblinloan: 3, overtime: 3, accountant: 2, lifebond: 5, witchsale: 2 }[c.id] ?? 0;
-  return day <= c.day + last;
+  const span = CONTRACT_SPAN[c.id];
+  return !!span && day <= c.day + span[1];
+}
+
+export function contractDaysLeft(s, c) {
+  const span = CONTRACT_SPAN[c.id];
+  return span ? c.day + span[1] - s.day + 1 : 0;
 }
 
 export function activeContracts(s) {
@@ -173,7 +184,10 @@ function startDay(s) {
   s.bonusGradeNext = false;
   s.offers = drawOffers(s);
   s.phase = 'pick';
+  s.briefSeen = false;
 }
+
+export function seeBrief(s) { s.briefSeen = true; }
 
 function drawContracts(s) {
   const pool = Object.keys(CONTRACTS).filter((id) => contractEligible(s, id));

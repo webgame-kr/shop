@@ -1,10 +1,12 @@
 // 효과음과 배경음. 기획서대로 처음엔 꺼져 있고, 켤 때 처음으로 파일을 받아 Web Audio로 재생한다.
-const KEY = 'small-shop:sound';
+const KEY = 'demon-shop:sound';
 
 // 이름 → 파일 개수(여러 개면 _1.._n 중 하나를 무작위로)
 const SFX = {
-  ui_tap: 3, item_pick: 1, item_place: 3, item_rotate: 1, place_invalid: 1, undo: 1, discard: 1,
-  combo_spark: 1, open_shop: 1, coin_tick: 5, day_total: 1, grade_reveal: 1, new_record: 1,
+  ui_tap: 3, item_pick: 1, item_place: 3, item_rotate: 1, place_invalid: 1, undo: 1, discard: 1, reroll: 1,
+  merge_ready: 1, merge_complete: 1, contract_open: 1, contract_sign: 1, contract_reject: 1,
+  open_shop: 1, coin_tick: 5, pay_success: 1, pay_fail: 1, flame_out: 1, settlement_toll: 1,
+  reward_pick: 1, seized: 1, demon_voice: 3,
 };
 const VOLUME = { sfx: 0.8, bgm: 0.32 };
 

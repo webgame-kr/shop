@@ -9,14 +9,15 @@ export const MAX_LIVES = 3;
 const ONE = [[0, 0]];
 const H2 = [[0, 0], [1, 0]];
 const V2 = [[0, 0], [0, 1]];
-const H3 = [[0, 0], [1, 0], [2, 0]];
+const V3 = [[0, 0], [0, 1], [0, 2]];
 const SQ = [[0, 0], [1, 0], [0, 1], [1, 1]];
 const L3 = [[0, 0], [0, 1], [1, 1]];
 
+// 분야 색은 디자인 시안(2026.11.02)
 export const CATS = {
-  alch: { name: '연금술', color: '#7fc8a9' },
-  gear: { name: '모험 장비', color: '#e3a86b' },
-  magic: { name: '마법 잡화', color: '#b59be0' },
+  alch: { name: '연금술', color: '#2F7558' },
+  gear: { name: '모험 장비', color: '#3F5F8C' },
+  magic: { name: '마법 잡화', color: '#7448A3' },
 };
 
 // effect 문구의 {n}은 등급에 따라 바뀌는 수치
@@ -24,14 +25,14 @@ export const ITEMS = {
   potion: { name: '물약', icon: '🧪', cat: 'alch', cells: ONE, base: 3, effect: '약초·가마의 도움을 받는 기본 상품' },
   herb: { name: '약초', icon: '🌿', cat: 'alch', cells: ONE, base: 1, effect: '붙어 있는 물약마다 +{2}' },
   mushroom: { name: '버섯', icon: '🍄', cat: 'alch', cells: ONE, base: 2, effect: '붙어 있는 다른 연금술 종류마다 자신 +{1} (최대 3종)' },
-  poison: { name: '독병', icon: '☠️', cat: 'alch', cells: V2, base: 6, effect: '물약과 붙으면 자신 +{4}' },
+  poison: { name: '독병', icon: '☠️', cat: 'alch', cells: ONE, base: 5, effect: '물약과 붙으면 자신 +{3}' },
   cauldron: { name: '연금 가마', icon: '⚗️', cat: 'alch', cells: SQ, base: 4, effect: '붙어 있는 다른 연금술 상품마다 +{2}' },
   sword: { name: '검', icon: '🗡️', cat: 'gear', cells: V2, base: 5, effect: '방패와 붙으면 자신 +{3}' },
   shield: { name: '방패', icon: '🛡️', cat: 'gear', cells: SQ, base: 7, effect: '진열대 가장자리에 닿으면 자신 +{3}' },
   boots: { name: '장화', icon: '👢', cat: 'gear', cells: L3, base: 6, effect: '붙어 있는 다른 장비 종류마다 자신 +{2} (최대 2종)' },
-  bow: { name: '활', icon: '🏹', cat: 'gear', cells: H3, base: 8, effect: '붙어 있는 장비마다 자신 +{2} (최대 2개)' },
+  bow: { name: '활', icon: '🏹', cat: 'gear', cells: V3, base: 8, effect: '붙어 있는 장비마다 자신 +{2} (최대 2개)' },
   whetstone: { name: '숫돌', icon: '🪨', cat: 'gear', cells: ONE, base: 1, effect: '붙어 있는 검·활마다 +{3}' },
-  tome: { name: '마도서', icon: '📕', cat: 'magic', cells: H2, base: 5, effect: '붙어 있는 다른 마법 잡화 종류마다 자신 +{2} (최대 2종)' },
+  tome: { name: '마도서', icon: '📕', cat: 'magic', cells: V2, base: 5, effect: '붙어 있는 다른 마법 잡화 종류마다 자신 +{2} (최대 2종)' },
   orb: { name: '수정구', icon: '🔮', cat: 'magic', cells: ONE, base: 4, effect: '마도서와 붙으면 자신 +{3}' },
   charm: { name: '부적', icon: '🧿', cat: 'magic', cells: ONE, base: 2, effect: '붙어 있는 상품 종류마다 자신 +{1} (최대 4종)' },
   candle: { name: '촛대', icon: '🕯️', cat: 'magic', cells: V2, base: 1, effect: '붙어 있는 마도서·수정구마다 +{3}' },
@@ -47,8 +48,11 @@ export function effectText(id, g = 1) {
   return ITEMS[id].effect.replace(/\{(\d+)\}/g, (_, n) => String(Number(n) * g));
 }
 
+const ROMAN = ['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ', 'Ⅸ', 'Ⅹ'];
+export function roman(g) { return ROMAN[g - 1] ?? String(g); }
+
 export function gradeLabel(g) {
-  return g <= 1 ? '하급' : g === 2 ? '중급' : g === 3 ? '상급' : `${g}등급`;
+  return g <= 1 ? '하급' : g === 2 ? '중급' : g === 3 ? '상급' : '최상급';
 }
 
 /* ---------- 모양 ---------- */
@@ -162,7 +166,7 @@ export function evaluate(pieces, ctx) {
         add(p.uid, '연금술 이웃', Math.min(k.size, 3) * g, 'place', n.filter((q) => k.has(q.id)).map((q) => q.uid));
         break;
       }
-      case 'poison': { const m = ofId('potion'); if (m.length) add(p.uid, '물약', 4 * g, 'place', m.map((q) => q.uid)); break; }
+      case 'poison': { const m = ofId('potion'); if (m.length) add(p.uid, '물약', 3 * g, 'place', m.map((q) => q.uid)); break; }
       case 'sword': { const m = ofId('shield'); if (m.length) add(p.uid, '방패', 3 * g, 'place', m.map((q) => q.uid)); break; }
       case 'shield': if (cellsOf(p).some(isEdge)) add(p.uid, '가장자리', 3 * g, 'place'); break;
       case 'boots': {

@@ -10,7 +10,7 @@ const ev = (pieces, customer = null, mods = {}) => evaluate(pieces, { dim, custo
 const tot = (pieces, p, ...rest) => ev(pieces, ...rest).items.get(p.uid).total;
 
 test('회전한 모양과 차지하는 칸이 일치한다', () => {
-  assert.deepEqual(shapeOf('bow', 1), [[0, 0], [0, 1], [0, 2]]);
+  assert.deepEqual(shapeOf('bow', 1), [[0, 0], [1, 0], [2, 0]]);
   assert.deepEqual(sizeOf('boots', 1), { w: 2, h: 2 });
   assert.deepEqual(cellsOf(P('candle', 2, 1, 1)), [[2, 1], [3, 1]]);
 });
@@ -19,7 +19,7 @@ test('겹치기·진열대 밖·봉인 칸에는 놓을 수 없다', () => {
   const a = P('shield', 0, 0);
   assert.equal(canPlace(dim, [a], P('potion', 1, 1)), false);
   assert.equal(canPlace(dim, [a], P('potion', 2, 1)), true);
-  assert.equal(canPlace(dim, [], P('bow', 3, 0)), false);
+  assert.equal(canPlace(dim, [], P('bow', 3, 2)), false);
   assert.equal(canPlace(dim, [], P('potion', 2, 2), undefined, ['2,2']), false);
 });
 
