@@ -9,6 +9,7 @@ import {
 import * as G from './game.js';
 import { drawCard } from './card.js';
 import * as S from './sound.js';
+import { renderGuide, renderCodex } from './guide.js';
 
 const KEY_RUN = 'demon-shop:run';
 const KEY_BEST = 'demon-shop:best';
@@ -50,7 +51,11 @@ let judgeAnim = null;
 
 /* ---------- 저장 ---------- */
 
-function save() { if (s) store.set(KEY_RUN, s); }
+// 튜토리얼(연습 상점) 중에는 본 게임 진행을 저장하지 않고 레슨 목표만 확인한다
+function save() {
+  if (tut) return checkTut();
+  if (s) store.set(KEY_RUN, s);
+}
 function loadRun() {
   const r = store.get(KEY_RUN);
   return r && r.v === 3 && Array.isArray(r.pieces) ? r : null;
@@ -688,7 +693,7 @@ function renderActions(coach) {
 }
 
 function coachStep() {
-  if (tutorialDone() || s.day !== 1) return 0;
+  if (tut || tutorialDone() || s.day !== 1) return 0;
   if (s.picksDone === 0) return 1;
   if (s.picksDone === 1 && s.phase !== 'arrange') return 2;
   return 3;
@@ -880,7 +885,7 @@ function openShop() {
   select(null);
   const last = G.openShop(s);
   if (!last) return;
-  if (!tutorialDone()) store.set(KEY_TUTORIAL, true);
+  if (!tut && !tutorialDone()) store.set(KEY_TUTORIAL, true);
   save();
   S.play('open_shop');
   showJudge();
@@ -976,7 +981,7 @@ function finishJudge() {
 
 function showResult() {
   const sum = G.summary(s);
-  const fresh = !s.final;
+  const fresh = !s.final && !tut;
   if (fresh) {
     const prevBest = bestRecord();
     const isNew = G.better({ days: sum.days, total: s.total }, prevBest);
@@ -984,6 +989,7 @@ function showResult() {
     s.final = { isNew, prev: prevBest ?? null };
     save();
   }
+  if (!s.final) s.final = { isNew: false, prev: null }; // 튜토리얼
   const top = sum.topPiece;
   $('notice').innerHTML = `<p class="org">마계 상점가 관리국</p><h2>압류 통지서</h2>
     <p class="body">상호 <b>「${sum.nickname}」</b>는 영혼의 불꽃이 모두 꺼져 아래 기록과 함께 압류되었음을 알립니다.</p>
@@ -1295,7 +1301,7 @@ function bind() {
     else openShop();
   };
   $('btn-coach-skip').onclick = () => { store.set(KEY_TUTORIAL, true); render(); };
-  $('btn-menu').onclick = () => $('help').showModal();
+  $('btn-menu').onclick = () => openSheet('menu');
   $('btn-new').onclick = () => {
     const run = loadRun();
     if (run && run.phase !== 'over' && !confirm('진행 중인 상점이 있어요. 새 계약서에 서명할까요?')) return;
@@ -1303,11 +1309,10 @@ function bind() {
     startNew();
   };
   $('btn-continue').onclick = resume;
-  $('btn-home').onclick = () => { $('help').close(); goStart(); };
+  $('btn-home').onclick = () => { $('menu').close(); if (tut) quitTutorial(); else goStart(); };
   $('btn-again').onclick = () => { S.play('contract_sign'); startNew(); };
   $('btn-result-home').onclick = goStart;
   $('btn-card').onclick = saveCard;
-  document.querySelectorAll('[data-open-help]').forEach((b) => { b.onclick = () => $('help').showModal(); });
 
   const syncSound = () => {
     const any = S.isOn('sfx') || S.isOn('bgm');
@@ -1346,18 +1351,241 @@ function bind() {
   });
 }
 
-function fillHelp() {
-  $('help-items').innerHTML = ITEM_IDS.map((id) => {
-    const it = ITEMS[id];
-    return `<div class="help-item"><div class="pic"><img src="${itemImg(id)}" alt=""></div>
-      <b>${it.name}</b><div class="meta">${CATS[it.cat].name} · ${it.cells.length}칸 · 기본 ${it.base}</div><div>${effectText(id, 1)}</div>
-      <div class="meta" style="margin-top:4px">변이 ${hexHTML(id, 'A', 'hex-big')} ${mutName(id, 'A')} / ${hexHTML(id, 'B', 'hex-big')} ${mutName(id, 'B')}</div></div>`;
-  }).join('');
-  $('help-guests').innerHTML = Object.entries(CUSTOMERS).map(([id, c]) =>
-    `<div><img src="${guestImg(id)}" alt=""><span><b>${c.name}</b>${c.text}<br><small>호감 조건: ${G.REGULAR[id].cond} · 단골 효과: ${G.REGULAR[id].effect}</small></span></div>`).join('');
+
+/* ---------- 도감 · 운영 안내서 · 메뉴 ---------- */
+
+let codexTab = 'items';
+let codexFilter = 'all';
+
+function openCodex() {
+  renderCodex($('codex-body'), $('codex-filters'), codexTab, codexFilter, s);
+  document.querySelectorAll('#codex .tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === codexTab)));
+  openSheet('codex');
 }
 
-fillHelp();
+function openSheet(id) {
+  document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+  $(id).showModal();
+  $(id).scrollTop = 0;
+}
+
+function openNamed(name) {
+  if (name === 'guide') { renderGuide($('guide-body'), $('guide-toc')); openSheet('guide'); }
+  if (name === 'codex') openCodex();
+  if (name === 'tutorial') {
+    document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+    startTutorial(0);
+  }
+}
+
+/* ---------- 튜토리얼 모드 ----------
+   연습 상점: 레슨마다 준비된 상태로 시작해 실제 화면에서 한 가지 시스템을 해 본다.
+   본 게임의 진행·최고 기록·첫 플레이 안내에는 아무것도 저장하지 않는다. */
+
+let tut = null; // { i, done }
+
+const tp = (s, list) => {
+  s.pieces = list.map(([id, x, y, g = 1, rot = 0], i) => ({ uid: i + 1, id, x, y, rot, g }));
+  s.nextUid = list.length + 1;
+};
+const lessonState = (seed, day, fn) => {
+  const s = G.newGame(seed);
+  s.day = day;
+  s.briefSeen = true;
+  s.contractOffer = null;
+  s.customers = [];
+  fn(s);
+  return s;
+};
+const arrangeIt = (s) => { s.phase = 'arrange'; s.offers = null; s.picksLeft = 0; s.picksDone = 2; };
+const guestsFor = (s, list) => { s.customers = list; };
+const hasBonus = (s, id, label) => {
+  const ev = G.income(s);
+  return s.pieces.some((p) => p.id === id && ev.items.get(p.uid).bonuses.some((b) => b.label === label));
+};
+
+const LESSONS = [
+  {
+    title: '입고와 배치',
+    body: '아침 화면에서 <b>오늘 납부액</b>을 확인하고 [상품 입고하러 가기]. 후보 하나를 누르고 [고르기] → 진열대 칸을 누르면 미리보기가 떠요 → [여기에 놓기].',
+    goal: '상품 1개를 진열하기',
+    setup: () => {
+      const s = lessonState(101, 1, (x) => { guestsFor(x, ['witches', 'school']); x.briefSeen = false; });
+      s.offers = [{ id: 'potion', why: 'new' }, { id: 'herb', why: 'new' }, { id: 'sword', why: 'new' }];
+      return s;
+    },
+    done: (s) => s.pieces.length >= 1,
+  },
+  {
+    title: '붙여 놓으면 보너스',
+    body: '<b>약초</b>는 상하좌우로 붙은 회복 물약의 매출을 올려 줘요. 약초를 골라 회복 물약 옆에 놓아 보세요. 놓기 전 미리보기에 바뀌는 매출이 떠요.',
+    goal: '약초를 회복 물약 옆에 놓기',
+    setup: () => {
+      const s = lessonState(102, 1, (x) => guestsFor(x, ['witches', 'school']));
+      tp(s, [['potion', 1, 1]]);
+      s.picksDone = 1; s.picksLeft = 1; s.phase = 'pick';
+      s.offers = [{ id: 'herb', why: 'guest' }, { id: 'sword', why: 'new' }, { id: 'orb', why: 'new' }];
+      return s;
+    },
+    done: (s) => hasBonus(s, 'potion', '약초'),
+  },
+  {
+    title: '영업과 납부',
+    body: '위쪽 막대에서 <b>목표(납부액)</b>와 예상 매출을 비교하고 [영업 시작]. 영수증에서 매출이 기본·배치·변이·손님·계약으로 나뉘어요. 남는 돈은 <b>잔금</b>이 되고, 모자라면 불꽃이 하나 꺼져요.',
+    goal: '영업을 시작해 납부 결과 보기',
+    setup: () => {
+      const s = lessonState(103, 2, (x) => guestsFor(x, ['witches', 'adventurers', 'school']));
+      tp(s, [['potion', 1, 1], ['herb', 0, 1], ['sword', 3, 0], ['whetstone', 4, 0]]);
+      arrangeIt(s);
+      return s;
+    },
+    done: (s) => s.history.length >= 1,
+  },
+  {
+    title: '합성과 변이',
+    body: '같은 상품·같은 등급 <b>3개</b>를 합치면 한 등급 위 1개가 돼요. 회복 물약을 눌러 [미리보기] → [합성하기]. 처음 Ⅱ등급이 되면 <b>변이</b> 둘 중 하나를 골라요(그 판 동안 종류 전체에 적용).',
+    goal: '회복 물약을 합성하고 변이 고르기',
+    setup: () => {
+      const s = lessonState(104, 3, (x) => guestsFor(x, ['witches', 'school', 'noble', 'goblins']));
+      tp(s, [['potion', 0, 0], ['herb', 1, 0], ['potion', 2, 0], ['potion', 4, 0], ['sword', 4, 1]]);
+      arrangeIt(s);
+      return s;
+    },
+    done: (s) => !!s.mutations.potion,
+  },
+  {
+    title: '손님과 단골',
+    body: '오늘 손님은 <b>마녀 모임</b>. 손님이 온 날 그 손님의 <b>호감 조건</b>(연금술 조합 활성화)을 채운 채 영업하면 호감도가 올라요. ♥♥가 되면 단골 제안이 와요 → [단골로 맞이하기].',
+    goal: '마녀 모임을 단골로 맞이하기',
+    setup: () => {
+      const s = lessonState(105, 4, (x) => guestsFor(x, ['school', 'noble', 'goblins', 'witches', 'adventurers']));
+      tp(s, [['potion', 0, 0], ['herb', 1, 0], ['potion', 2, 0], ['cauldron', 0, 1]]);
+      s.favor = { witches: 1 };
+      arrangeIt(s);
+      return s;
+    },
+    done: (s) => s.regulars.includes('witches'),
+  },
+  {
+    title: '마왕의 계약',
+    body: '계약은 <b>즉시 거래·기간형·조건형</b>에서 하나씩 와요. 서명하거나 모두 거절해야 영업할 수 있어요. 아래 버튼으로 계약 화면을 열어 받는 것·대가·기간·오늘 영향을 읽어 보세요.',
+    goal: '계약에 서명하거나 모두 거절하기',
+    setup: () => {
+      const s = lessonState(106, 6, (x) => guestsFor(x, ['school', 'noble', 'goblins', 'witches', 'adventurers', 'witches', 'noble']));
+      tp(s, [['potion', 0, 0], ['herb', 1, 0], ['potion', 2, 0], ['cauldron', 0, 1], ['sword', 4, 0], ['whetstone', 3, 0]]);
+      s.balance = 30;
+      arrangeIt(s);
+      s.contractOffer = { ids: ['rush', 'smoke', 'dept'], data: { rush: { cost: 16 }, smoke: {}, dept: {} } };
+      return s;
+    },
+    done: (s) => !s.contractOffer,
+  },
+  {
+    title: '결산일과 성장',
+    body: '5일마다 <b>결산일</b>. 납부액이 높지만 성공하면 성장 보상 셋 중 하나를 골라요. <b>우선 입고</b>를 고르면 그 상품이 후보에 더 자주 나와요(보장은 아님).',
+    goal: '결산일 납부에 성공하고 보상 고르기',
+    setup: () => {
+      const s = lessonState(107, 5, (x) => guestsFor(x, ['school', 'noble', 'goblins', 'witches', 'adventurers', 'witches']));
+      tp(s, [['armor', 0, 0], ['shield', 2, 0], ['bow', 4, 0], ['sword', 2, 2], ['whetstone', 3, 2], ['potion', 0, 2], ['herb', 1, 2]]);
+      arrangeIt(s);
+      return s;
+    },
+    done: (s) => s.day >= 6 && s.phase !== 'reward',
+  },
+  {
+    title: '잔금 쓰기',
+    body: '정상 납부하고 남은 돈이 <b>잔금</b>이에요. 정리 화면에서 [추가 입고]나 [자물쇠 칸 열기]를 사 보세요. 잔금으로 납부 부족분을 메우지는 못해요.',
+    goal: '잔금으로 추가 입고 또는 진열대 확장',
+    setup: () => {
+      const s = lessonState(108, 7, (x) => guestsFor(x, ['school', 'noble', 'goblins', 'witches', 'adventurers', 'witches', 'school', 'noble']));
+      tp(s, [['potion', 0, 0], ['herb', 1, 0], ['potion', 2, 0], ['tome', 4, 0], ['candle', 3, 0]]);
+      s.balance = 90;
+      arrangeIt(s);
+      return s;
+    },
+    done: (s) => s.expand >= 1 || s.extras >= 1,
+  },
+];
+
+function startTutorial(i) {
+  tut = { i, done: false };
+  s = LESSONS[i].setup();
+  resetSelection();
+  stripOpen = false;
+  document.body.classList.add('tut');
+  $('tut-bar').hidden = false;
+  $('tut-bar').classList.remove('folded');
+  document.body.classList.remove('tut-folded');
+  renderTut();
+  route();
+}
+
+function quitTutorial() {
+  tut = null;
+  s = null;
+  document.body.classList.remove('tut', 'tut-folded');
+  $('tut-bar').hidden = true;
+  padForTut();
+  goStart();
+}
+
+function checkTut() {
+  if (!tut || tut.done || !s) return;
+  if (LESSONS[tut.i].done(s)) {
+    tut.done = true;
+    S.play('condition_success');
+    $('tut-bar').classList.remove('folded');
+    document.body.classList.remove('tut-folded');
+  }
+  renderTut();
+}
+
+function renderTut() {
+  if (!tut) return;
+  const L = LESSONS[tut.i];
+  const last = tut.i === LESSONS.length - 1;
+  $('tut-step').textContent = `튜토리얼 ${tut.i + 1} / ${LESSONS.length}`;
+  $('tut-title').textContent = L.title;
+  $('tut-body').innerHTML = L.body;
+  $('tut-goal').textContent = `${tut.done ? '✓ 완료' : '목표'} · ${L.goal}`;
+  $('tut-goal').classList.toggle('done', tut.done);
+  const next = $('tut-next');
+  next.disabled = !tut.done;
+  next.textContent = last ? '튜토리얼 마치기' : '다음 단계 →';
+  padForTut();
+}
+
+// 안내 띠가 화면 머리를 가리지 않도록 띠 높이만큼 내린다
+function padForTut() {
+  $('app').style.paddingTop = tut ? `${$('tut-bar').offsetHeight + 16}px` : '';
+}
+
+function bindTutorial() {
+  document.addEventListener('click', (e) => {
+    const o = e.target.closest('[data-open]');
+    if (o) openNamed(o.dataset.open);
+  });
+  $('codex').addEventListener('click', (e) => {
+    const t = e.target.closest('[data-tab]');
+    if (t) { codexTab = t.dataset.tab; return openCodex(); }
+    const f = e.target.closest('[data-filter]');
+    if (f) { codexFilter = f.dataset.filter; openCodex(); }
+  });
+  $('tut-next').onclick = () => {
+    if (!tut?.done) return;
+    if (tut.i + 1 < LESSONS.length) startTutorial(tut.i + 1);
+    else { quitTutorial(); toast('튜토리얼을 마쳤어요. 이제 진짜 계약서에 서명해 볼까요?'); }
+  };
+  $('tut-quit').onclick = quitTutorial;
+  $('tut-fold').onclick = () => {
+    const f = $('tut-bar').classList.toggle('folded');
+    document.body.classList.toggle('tut-folded', f);
+    padForTut();
+  };
+  window.addEventListener('resize', padForTut);
+}
+
 S.init();
 bind();
+bindTutorial();
 goStart();

@@ -33,7 +33,11 @@
           <svg class="off" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l4 6M21 9l-4 6"/></svg>
           <svg class="on" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 8.5a5 5 0 0 1 0 7M19.5 6a8.5 8.5 0 0 1 0 12"/></svg>
         </button>
-        <button class="link" data-open-help>규칙 · 도움말</button>
+        <div class="start-links">
+          <button class="pill" data-open="guide">📜 안내서</button>
+          <button class="pill" data-open="codex">도감</button>
+          <button class="pill" data-open="tutorial">튜토리얼</button>
+        </div>
       </div>
     </section>
 
@@ -151,36 +155,61 @@
     </section>
   </main>
 
-  <dialog id="help" class="sheet">
+  <!-- 메뉴 -->
+  <dialog id="menu" class="sheet menu-sheet">
     <form method="dialog"><button class="round close" aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></form>
-    <h2>규칙 · 도움말</h2>
+    <h2>메뉴</h2>
+    <div class="menu-grid">
+      <button class="menu-btn" data-open="guide"><span class="mi">📜</span><b>운영 안내서</b><small>규칙과 시스템</small></button>
+      <button class="menu-btn" data-open="codex"><span class="mi"><img src="img/potion.png" alt=""></span><b>도감</b><small>상품 24종 · 손님 6종</small></button>
+      <button class="menu-btn" data-open="tutorial"><span class="mi"><img src="img/demon.png" alt=""></span><b>튜토리얼</b><small>연습 상점에서 배우기</small></button>
+    </div>
+    <h3>소리</h3>
     <div class="toggles">
       <label class="toggle"><span>효과음</span><input type="checkbox" id="opt-sfx"><i></i></label>
       <label class="toggle"><span>배경음악</span><input type="checkbox" id="opt-bgm"><i></i></label>
     </div>
     <p class="fine">소리는 처음에 꺼져 있어요. 소리가 없어도 모든 정보는 화면에 보여요.</p>
-    <ul class="help-rules">
-      <li>매일 아침 <b>오늘 납부액</b>과 오늘·내일 손님이 공개돼요. 납부액은 하루 도중에 바뀌지 않아요.</li>
-      <li>후보 3개 중 하나를 고르는 입고를 하루 2번 해요. <b>상품 누르기 → 놓을 칸 누르기 → 여기에 놓기.</b></li>
-      <li>상품은 팔려도 사라지지 않고 매일 매출을 내요. 상하좌우로 맞닿으면 붙은 거예요.</li>
-      <li><b>합성</b>: 같은 상품·같은 등급 3개 → 한 등급 위 1개(약 2.4배). 셋을 따로 둔 것보다 매출은 조금 적지만 칸이 비어요. 놓지 않은 새 상품도 재료가 돼요.</li>
-      <li>오늘 매출이 납부액 이상이면 남는 돈이 <b>잔금</b>으로 쌓여요. 못 미치면 불꽃 하나가 꺼지고 잔금은 늘지 않아요. 잔금으로 부족분을 메우지는 못해요.</li>
-      <li>잔금으로 후보 다시 뽑기, 추가 입고, 진열대 확장(자물쇠 칸, 최대 7×6)을 살 수 있어요.</li>
-      <li>불꽃이 꺼진 다음 날엔 <b>마왕의 유예</b>로 후보를 무료로 한 번 다시 뽑을 수 있어요.</li>
-      <li>5일마다 <b>결산일</b>: 납부액이 높지만, 성공하면 성장 보상 셋 중 하나를 골라요.</li>
-      <li><b>변이</b>: 한 상품 종류가 처음 Ⅱ등급이 되면 두 변이 중 하나를 골라요. 그 판 동안 그 종류의 Ⅱ등급 이상 전체에 적용돼요.</li>
-      <li><b>단골</b>: 특별 손님의 선호 조건을 채운 채 영업하면 호감도가 올라요(방문당 최대 1). 쌓이면 단골 제안이 오고, 최대 두 집단까지. 불꽃을 잃어도 떠나지 않아요.</li>
-      <li><b>계약</b>: 3일, 6일, 8일, 11일…에 즉시 거래·기간형·조건형에서 하나씩 제안돼요. 서명하거나 모두 거절해야 그날 영업할 수 있어요. 기간형·조건형은 합쳐서 두 개까지, 조건형은 실패해도 계약금만 잃어요.</li>
-      <li><b>우선 입고</b>: 결산 보상으로 상품 한 종류를 고르면 후보에 더 자주 나와요(보장은 아니에요).</li>
-      <li>영업 전까지는 되돌리기로 오늘 한 일을 되돌릴 수 있어요.</li>
-    </ul>
-    <h3>상품 24종</h3>
-    <div id="help-items" class="help-items"></div>
-    <h3>특별 손님</h3>
-    <div id="help-guests" class="help-guests"></div>
-    <p class="fine">진행 상황과 최고 기록은 이 브라우저에만 저장돼요. 브라우저 데이터를 지우거나 다른 기기에서 열면 이어지지 않아요. 키보드: R 회전 · Enter 놓기 · Ctrl+Z 되돌리기 · Esc 선택 해제 · Delete 버리기</p>
     <button class="btn outline big" id="btn-home">처음 화면으로</button>
   </dialog>
+
+  <!-- 운영 안내서 -->
+  <dialog id="guide" class="sheet guide-sheet">
+    <form method="dialog"><button class="round close" aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></form>
+    <div class="guide-head">
+      <img src="img/demon.png" alt="">
+      <div><p class="k">마계 상점가 관리국 발행</p><h2>상점 운영 안내서</h2><p class="sub">세입자가 꼭 알아야 할 아홉 가지. 작은 글씨는 없습니다.</p></div>
+    </div>
+    <nav class="guide-toc" id="guide-toc"></nav>
+    <div id="guide-body"></div>
+    <div class="guide-foot">
+      <button class="btn outline" data-open="codex">도감 보기</button>
+      <button class="btn primary" data-open="tutorial">튜토리얼 시작</button>
+    </div>
+  </dialog>
+
+  <!-- 도감 -->
+  <dialog id="codex" class="sheet codex-sheet">
+    <form method="dialog"><button class="round close" aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></form>
+    <h2>도감</h2>
+    <div class="tabs" role="tablist">
+      <button role="tab" class="tab" data-tab="items" aria-selected="true">상품 24종</button>
+      <button role="tab" class="tab" data-tab="guests" aria-selected="false">손님 6종</button>
+    </div>
+    <div class="filters" id="codex-filters"></div>
+    <div id="codex-body"></div>
+  </dialog>
+
+  <!-- 튜토리얼 안내 띠 -->
+  <div class="tut-bar" id="tut-bar" hidden>
+    <div class="tut-top"><span class="tut-step" id="tut-step"></span><b id="tut-title"></b>
+      <button class="tut-fold" id="tut-fold" aria-label="접기"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button></div>
+    <div class="tut-main" id="tut-main">
+      <p id="tut-body"></p>
+      <p class="tut-goal" id="tut-goal"></p>
+      <div class="tut-btns"><button class="small-btn" id="tut-quit">튜토리얼 나가기</button><button class="small-btn hot" id="tut-next" disabled>다음 단계 →</button></div>
+    </div>
+  </div>
 
   <dialog id="card-dialog" class="sheet">
     <form method="dialog"><button class="round close" aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></form>
