@@ -677,6 +677,7 @@ body.tut .start-foot, body.tut #btn-coach-skip { display: none !important; }
 .otag.tmain, .otag.tstart { background: #E8A6C9; }
 .otag.tsame { background: #FFC08A; }
 .otag.texclusive, .otag.treward { background: var(--gold); }
+.otag.tegg { background: #E8A6C9; }
 .rr-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
 .rr-row.single { grid-template-columns: 1fr; }
 .btn.rr { background: transparent; border: 2px solid var(--ink); color: var(--ink); border-radius: 14px; padding: 8px; font-family: var(--dh); font-size: 17px; display: grid; gap: 2px; box-shadow: none; }
@@ -775,3 +776,7 @@ body.tut .start-foot, body.tut #btn-coach-skip { display: none !important; }
 .shelf.peek .board { pointer-events: none; }
 .piece.match { z-index: 2; }
 .piece.match .pc { outline: .6cqw solid var(--gold); outline-offset: -.6cqw; box-shadow: 0 0 2.4cqw rgba(242, 196, 107, .7); }
+/* 상세 머리줄: 버튼이 늘어나면 이름 아래로 내려간다 */
+.detail .dh { flex-wrap: wrap; row-gap: 6px; }
+.detail .dh .nm, .detail .dh .mname { white-space: nowrap; }
+.detail .dh .acts { flex-wrap: wrap; justify-content: flex-end; }

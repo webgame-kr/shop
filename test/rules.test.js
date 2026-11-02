@@ -204,7 +204,7 @@ test('주력 단골 결산: 친밀도별 보상, 이용권은 1번 자리만, �
   s.regulars = ['keeper', 'ogre'];
   s.main = 'keeper'; s.everMain = true;
   s.favor = { keeper: 4, ogre: 2 };
-  s.pieces = [P('armor', 0, 0), P('shield', 2, 0), P('bow', 4, 0), P('sword', 2, 2)];
+  s.pieces = [P('armor', 0, 0), P('shield', 2, 0), P('bow', 4, 0), P('sword', 2, 2), P('armor', 0, 2, 0, 2)];
   s.forfeitReward = true; // 성장 보상은 건너뛰고 바로 주력 단계로
   s.customers = ['goblins', 'noble', 'goblins', 'noble', 'adventurers'];
   const r = G.openShop(s);
@@ -348,5 +348,64 @@ test('플레이 테스트 보고서 수정: 계약 중첩·반복, 독점 입고
   for (let i = 0; i < 40; i++) {
     const o = G.drawOffers(n)[2];
     if (o.why === 'new') assert.ok(!n.pieces.some((p) => p.id === o.id), o.id);
+  }
+});
+
+test('후반 성장: 팔기·등급 올리기·넘기기 보너스, 떠돌이 상한, 알 성장 조건과 꽉 찬 진열대 입고', () => {
+  const s = arrange(21);
+  s.day = 12;
+  s.pieces = [P('potion', 0, 0), P('slime', 1, 0)];
+  s.pieces[1].grow = 0;
+  s.balance = 100;
+  // 팔기: 기본의 1.5배, 알은 알 매출
+  assert.equal(G.sellValue(s.pieces[0]), Math.round(gradeBase('potion', 1) * 1.5));
+  assert.equal(G.sellValue(s.pieces[1]), ITEMS.slime.egg.base);
+  // 등급 올리기: 알은 불가, 잔금 또는 이용권
+  assert.equal(G.upgradeCost(s, s.pieces[1]), null);
+  const cost = G.upgradeCost(s, s.pieces[0]);
+  assert.ok(G.upgrade(s, s.pieces[0].uid));
+  assert.equal(s.pieces[0].g, 2);
+  assert.equal(s.balance, 100 - cost);
+  assert.equal(s.pendingMutation, 'potion');
+  G.chooseMutation(s, 'A');
+  s.upTickets = 1;
+  assert.equal(G.upgradeCost(s, s.pieces[0]), 0);
+  assert.equal(G.upgrade(s, s.pieces[0].uid), false); // 하루 한 번
+  s.day++;
+  assert.ok(G.upgrade(s, s.pieces[0].uid));
+  assert.equal(s.upTickets, 0);
+  s.day++;
+  assert.equal(G.upgradeCost(s, s.pieces[0]), null); // Ⅲ부터는 합성으로만
+  assert.ok(G.upgradeBlocked(s, s.pieces[0]));
+  const before = s.balance;
+  assert.ok(G.discard(s, s.pieces[0].uid));
+  assert.equal(s.balance, before + Math.round(gradeBase('potion', 3) * 1.5));
+  // 넘기기 보너스
+  const k = G.newGame(3);
+  k.day = 8;
+  assert.ok(G.skip(k));
+  assert.equal(k.balance, G.skipBonus(k));
+
+  // 떠돌이: 종류마다 +2, 최대 6종
+  const ids = ['potion', 'herb', 'sword', 'tome', 'ruby', 'coin', 'orb', 'candle'];
+  const ps = ids.map((id, i) => P(id, i % 5, Math.floor(i / 5) * 2));
+  const ev = evaluate(ps, { dim: { cols: 7, rows: 6 }, customer: 'wanderers', mutations: {}, perma: {}, mods: {} });
+  assert.equal(ev.sum.customer, 12);
+
+  // 성장 조건을 못 채운 와이번 알이 있으면 3번 자리에 식품이 자주 나온다
+  const e = G.newGame(30, 'gear');
+  e.pieces = [{ ...P('wyvern', 0, 0), grow: 0 }];
+  let egg = 0;
+  for (let i = 0; i < 40; i++) { const o = G.drawOffers(e)[2]; if (o.why === 'egg') { egg++; assert.equal(ITEMS[o.id].cat, 'food'); } }
+  assert.ok(egg >= 12, `egg ${egg}`);
+
+  // 빈칸이 거의 없으면 2번 자리는 합성을 완성하는 상품(같은 Ⅰ등급 2개 → 고르면 3개)
+  const full = G.newGame(31, 'alch');
+  const fill = ['herb', 'herb', ...['coin', 'ruby', 'potion', 'mushroom', 'moonhoney'].flatMap((id) => [id, id, id])];
+  full.pieces = fill.map((id, i) => P(id, i % 5, Math.floor(i / 5))); // 20칸 중 17칸, 빈칸 3
+  for (let i = 0; i < 10; i++) {
+    const o2 = G.drawOffers(full)[1];
+    assert.equal(o2.id, 'herb');
+    assert.ok(o2.complete);
   }
 });

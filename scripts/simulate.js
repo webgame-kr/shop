@@ -5,6 +5,8 @@ import * as G from '../js/game.js';
 
 const runs = Number(process.argv[2] ?? 200);
 const only = process.argv[3] ?? null;
+// 곡선 실험: PAY=a,b,c 로 납부액 계수를 바꿔 본다
+if (process.env.PAY) [G.PAY.a, G.PAY.b, G.PAY.c] = process.env.PAY.split(',').map(Number);
 const MAX_DAY = 80;
 
 function spots(s, id, g) {
@@ -54,7 +56,7 @@ function casual(s, rand) {
 // 오늘 매출이 가장 크게 오르는 후보·위치를 고른다. 자리가 부족하면 합성하고, 잔금으로 확장·추가 입고.
 function greedy(s) {
   if (s.phase === 'reward') {
-    const pref = ['expand', 'life', 'perma_gear', 'perma_magic', 'perma_alch', 'cash', 'grade', 'priority'];
+    const pref = ['expand', 'life', 'upgrade', 'perma_gear', 'perma_magic', 'perma_alch', 'cash', 'grade', 'priority'];
     const k = pref.find((r) => s.rewardOffer.includes(r));
     G.takeReward(s, k, k === 'priority' ? s.pieces[0].id : null);
     return;
@@ -85,6 +87,18 @@ function greedy(s) {
     G.placeHand(s, best.sp.x, best.sp.y, best.sp.rot);
     return;
   }
+  // 확장이 끝났거나 멀었으면, 매출이 가장 많이 오르는 상품의 등급을 올린다(잔금 20은 남김)
+  if (s.phase === 'arrange' && (G.expandCost(s) === null || s.balance > G.expandCost(s) + 60)) {
+    const base = G.income(s).sum.total;
+    let best = null;
+    for (const p of s.pieces) {
+      const cost = G.upgradeCost(s, p);
+      if (cost === null || cost > s.balance - 20) continue;
+      const gain = G.income(s, s.pieces.map((q) => (q === p ? { ...q, g: q.g + 1 } : q))).sum.total - base;
+      if (gain > 0 && (!best || gain / (cost + 1) > best.r)) best = { p, r: gain / (cost + 1) };
+    }
+    if (best && G.upgrade(s, best.p.uid)) return;
+  }
   if (s.phase === 'arrange' && s.balance >= G.extraCost(s) + 25) { G.buyExtra(s); return; }
 }
 
@@ -99,7 +113,11 @@ function play(seed, bot) {
     if (s.pendingMutation) G.chooseMutation(s, 'A');
     if (s.regularOffer) { if (s.regulars.length < 2) G.acceptRegular(s); else G.refuseRegular(s); }
     if (s.phase === 'mainpick') { G.settleMain(s, G.mainRewardOptions(s).slice(-1)[0] ?? null, null); continue; }
-    if (s.phase === 'arrange' && (bot === casual || s.balance < G.extraCost(s) + 25)) { G.openShop(s); continue; }
+    if (s.phase === 'arrange' && (bot === casual || s.balance < G.extraCost(s) + 25)) {
+      if (bot === greedy) { const before = s.balance; greedy(s); if (s.balance !== before) continue; }
+      G.openShop(s);
+      continue;
+    }
     if (s.phase === 'reward' && bot === casual) { const k = s.rewardOffer.find((r) => r !== 'priority') ?? 'priority'; G.takeReward(s, k, s.pieces[0]?.id); continue; }
     if (s.phase === 'place') { G.skip(s); continue; }
     bot(s, rand);

@@ -568,7 +568,7 @@ function renderStrip() {
     }
     html += `<dl class="pguests">${guestLine('오늘', today, true)}${guestLine('내일', tomorrow, false)}</dl>`;
     if (active.length) html += `<div class="pcons">${active.map((c) => { const t = G.CONTRACTS[c.id]; return `<button class="chip contract" data-go="contract-info" data-c="${c.id}">📜 ${t.name} · ${t.type === 'cond' ? G.condProgressText(s, c) : `${G.contractDaysLeft(s, c)}일 남음`}</button>`; }).join('')}</div>`;
-    const extra = [s.priority ? `★ 우선 입고 ${ITEMS[s.priority].name}` : '', s.freeTickets ? `🎟 1번 다시 뽑기 ${s.freeTickets}장` : '', s.tickets ? `추가 입고 이용권 ${s.tickets}장` : ''].filter(Boolean);
+    const extra = [s.priority ? `★ 우선 입고 ${ITEMS[s.priority].name}` : '', s.freeTickets ? `🎟 1번 다시 뽑기 ${s.freeTickets}장` : '', s.tickets ? `추가 입고 이용권 ${s.tickets}장` : '', s.upTickets ? `⇧ 등급 올리기 이용권 ${s.upTickets}장` : ''].filter(Boolean);
     if (extra.length) html += `<p class="pnote">${extra.join(' · ')}</p>`;
     html += '</div>';
   }
@@ -588,10 +588,11 @@ function coachHTML(step, dir) {
 function whyText(o, i) {
   const same = s.pieces.filter((p) => p.id === o.id && p.g === s.offerGrade && !isEgg(p)).length;
   const role = {
-    main: `${SHORT[s.main] ?? ''} 추천`, start: '시작 분야 추천', same: '보유 상품', new: '새로운 상품', exclusive: '독점 입고', reward: '보상 입고',
+    main: `${SHORT[s.main] ?? ''} 추천`, start: '시작 분야 추천', same: '보유 상품', new: '새로운 상품', exclusive: '독점 입고', reward: '보상 입고', egg: `${o.egg} 성장용`,
   }[o.why] ?? '';
   const extra = [];
   if (o.why === 'same' && same > 0 && same < 3) extra.push(same === 2 ? '고르면 합성 가능' : '합성까지 1개 더');
+  if (o.complete && same !== 2) extra.push('합성 완성');
   if (o.rare) extra.push('오랜만의 분야');
   if (o.prio) extra.push('★ 우선 입고');
   return `${i + 1} · ${[role, ...extra].join(' · ')}`;
@@ -716,7 +717,10 @@ function renderPanel(ev, prevEv, coach) {
       if (prevEv) { after = prevEv.items.get(p.uid); hint = `옮기면 전체 매출 ${prevEv.sum.total - ev.sum.total >= 0 ? '+' : ''}${prevEv.sum.total - ev.sum.total}`; }
       else { hint = '다른 상품이나 봉인된 칸과 겹쳐서 놓을 수 없어요.'; warn = true; }
     }
-    const acts = `<button class="small-btn" data-act="discard">버리기</button><button class="small-btn" data-act="deselect">닫기</button>`;
+    const up = G.upgradeCost(s, p);
+    const today = s.upgradedDay === s.day;
+    const upBtn = up === null ? '' : `<button class="small-btn${up === 0 && !today ? ' hot' : ''}" data-act="upgrade" ${s.balance < up || s.pendingMutation || today ? 'disabled' : ''}>${today ? '오늘은 이미 올렸어요' : `${roman(p.g + 1)}로 올리기 · ${up === 0 ? '이용권' : `잔금 ${up}`}`}</button>`;
+    const acts = `${upBtn}<button class="small-btn" data-act="discard">팔기 +${G.sellValue(p)}</button><button class="small-btn" data-act="deselect">닫기</button>`;
     panel.innerHTML = detailHTML(p, now, after, { acts, hint, warn, extra: ghost ? '' : mergeOfferHTML(G.mergePlan(s, p.uid)) });
     return;
   }
@@ -1284,12 +1288,14 @@ function rotate() {
 function discardSelected() {
   if (sel?.kind !== 'piece' || merging) return;
   const p = selectedPiece();
+  const v = G.sellValue(p);
   G.discard(s, p.uid);
   S.play('discard');
+  S.play('coin_tick', { delay: 0.15 });
   select(null);
   save();
   render();
-  toast(`${displayName(p)}을(를) 버렸어요. 되돌리기로 살릴 수 있어요.`);
+  toast(`${displayName(p)}을(를) 팔아 잔금 +${v}. 되돌리기로 살릴 수 있어요.`);
 }
 
 function act(fn, sound) {
@@ -1342,6 +1348,14 @@ function bind() {
     if (a === 'deselect' || a === 'tidy') { select(null); render(); }
     if (a === 'hold') { select({ kind: 'hand' }); render(); }
     if (a === 'discard') discardSelected();
+    if (a === 'upgrade' && sel?.kind === 'piece') {
+      const p = selectedPiece();
+      const free = G.upgradeCost(s, p) === 0;
+      if (act((x) => G.upgrade(x, p.uid), 'merge_complete')) {
+        spark = new Set([p.uid]);
+        toast(`${displayName(p)} ${roman(p.g)}등급으로 올렸어요${free ? ' · 이용권 사용' : ''}`);
+      }
+    }
     if (a === 'merge-preview') startMerge();
     if (a === 'extra') act(G.buyExtra, 'restock_new');
     if (a === 'reroll-all') { pickedOffer = null; act(G.reroll, 'reroll'); }
@@ -1461,7 +1475,7 @@ function bind() {
 
   $('btn-rotate').onclick = rotate;
   $('btn-undo').onclick = undo;
-  $('btn-skip').onclick = () => act(G.skip);
+  $('btn-skip').onclick = () => { const b = G.skipBonus(s); pickedOffer = null; if (act(G.skip, 'coin_tick')) toast(`이번 입고를 넘기고 잔금 +${b}`); };
   $('btn-reroll').onclick = () => { pickedOffer = null; act(G.reroll, 'reroll'); };
   $('btn-merge-cancel').onclick = () => { merging = null; render(); };
   $('btn-main').onclick = () => {
@@ -1637,7 +1651,7 @@ const LESSONS = [
     goal: '마녀 모임을 단골로 맞이하기',
     setup: () => {
       const s = lessonState(105, 4, (x) => guestsFor(x, ['school', 'noble', 'goblins', 'witches', 'adventurers']));
-      tp(s, [['potion', 0, 0], ['herb', 1, 0], ['potion', 2, 0], ['cauldron', 0, 1]]);
+      tp(s, [['potion', 0, 0], ['herb', 1, 0], ['potion', 2, 0], ['cauldron', 0, 1], ['ruby', 3, 0], ['sword', 4, 0]]);
       s.favor = { witches: 1 };
       arrangeIt(s);
       return s;
@@ -1664,7 +1678,7 @@ const LESSONS = [
     goal: '결산일 납부에 성공하고 보상 고르기',
     setup: () => {
       const s = lessonState(107, 5, (x) => guestsFor(x, ['school', 'noble', 'goblins', 'witches', 'adventurers', 'witches']));
-      tp(s, [['armor', 0, 0], ['shield', 2, 0], ['bow', 4, 0], ['sword', 2, 2], ['whetstone', 3, 2], ['potion', 0, 2], ['herb', 1, 2]]);
+      tp(s, [['armor', 0, 0], ['shield', 2, 0], ['bow', 4, 0], ['sword', 2, 2], ['whetstone', 3, 2], ['potion', 0, 2], ['herb', 1, 2], ['ruby', 0, 3]]);
       arrangeIt(s);
       return s;
     },
@@ -1676,7 +1690,7 @@ const LESSONS = [
     goal: '마수 하나를 성장 완료시키기',
     setup: () => {
       const s = lessonState(109, 4, (x) => guestsFor(x, ['school', 'keeper', 'goblins', 'keeper', 'noble']));
-      tp(s, [['wyvern', 0, 0], ['lavabread', 2, 0], ['nest', 0, 1], ['slime', 4, 2], ['ghostcheese', 4, 0]]);
+      tp(s, [['wyvern', 0, 0], ['lavabread', 2, 0], ['nest', 0, 1], ['slime', 4, 2], ['ghostcheese', 4, 0], ['ruby', 2, 1], ['sword', 3, 1]]);
       s.pieces[0].grow = 0; s.pieces[3].grow = 0;
       arrangeIt(s);
       return s;

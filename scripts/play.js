@@ -65,7 +65,8 @@ function pieces(s) {
       const g = gc.get(p.uid);
       grow = g.gain ? ` → 영업 후 성장 ${g.from}→${g.to}${g.nest ? '(둥지)' : ''}` : ` → 조건 아직: ${ITEMS[p.id].egg.grow}`;
     }
-    say(`  #${p.uid} ${itemLabel(p)}${m} @(${p.x},${p.y}) 회전${p.rot} · ${r.total}${bon ? ` (${bon})` : ''}${grow}`);
+    const up = G.upgradeCost(s, p);
+    say(`  #${p.uid} ${itemLabel(p)}${m} @(${p.x},${p.y}) 회전${p.rot} · ${r.total}${bon ? ` (${bon})` : ''}${grow} · 팔기 +${G.sellValue(p)}${up === null ? '' : ` · 올리기 ${up === 0 ? '이용권' : up}`}`);
   }
 }
 
@@ -73,9 +74,9 @@ function offerLine(s, o, i) {
   const it = ITEMS[o.id];
   const name = it.egg ? it.egg.name : it.name;
   const base = it.egg ? it.egg.base : gradeBase(o.id, s.offerGrade);
-  const why = { main: '주력 추천', start: '시작 분야', same: '보유 상품', new: '새 상품', exclusive: '독점 입고', reward: '주력 보상' }[o.why] ?? o.why;
+  const why = { main: '주력 추천', start: '시작 분야', same: '보유 상품', new: '새 상품', exclusive: '독점 입고', reward: '주력 보상', egg: `${o.egg} 성장용` }[o.why] ?? o.why;
   const fit = findSpot(s.dim, s.pieces, o.id, G.sealedNow(s));
-  return `  ${i + 1}) ${name} ${roman(s.offerGrade)} [${CATS[it.cat].name}] ${it.cells.length}칸 기본 ${base} · ${why}${o.rare ? '·오랜만' : ''}${o.prio ? '·★우선' : ''}${fit ? '' : ' · 놓을 자리 없음'}\n       ${it.egg ? `성장: ${it.egg.grow} · ` : ''}${effectText(o.id, s.offerGrade)}`;
+  return `  ${i + 1}) ${name} ${roman(s.offerGrade)} [${CATS[it.cat].name}] ${it.cells.length}칸 기본 ${base} · ${why}${o.rare ? '·오랜만' : ''}${o.complete ? '·합성 완성' : ''}${o.prio ? '·★우선' : ''}${fit ? '' : ' · 놓을 자리 없음'}\n       ${it.egg ? `성장: ${it.egg.grow} · ` : ''}${effectText(o.id, s.offerGrade)}`;
 }
 
 function show(s) {
@@ -101,7 +102,7 @@ function show(s) {
   }
   const fav = Object.entries(s.favor).filter(([g, f]) => f > 0 && !s.regulars.includes(g));
   if (fav.length) say('호감: ' + fav.map(([g, f]) => `${guestName(g)} ${f}`).join(' · '));
-  const extra = [s.freeTickets ? `무료 다시 뽑기 ${s.freeTickets}장` : '', s.tickets ? `추가 입고 이용권 ${s.tickets}장` : '', s.priority ? `우선 입고 ${ITEMS[s.priority].name}` : ''].filter(Boolean);
+  const extra = [s.freeTickets ? `무료 다시 뽑기 ${s.freeTickets}장` : '', s.tickets ? `추가 입고 이용권 ${s.tickets}장` : '', s.upTickets ? `등급 올리기 이용권 ${s.upTickets}장` : '', s.priority ? `우선 입고 ${ITEMS[s.priority].name}` : ''].filter(Boolean);
   if (extra.length) say(extra.join(' · '));
   const active = G.activeContracts(s);
   if (active.length) say('계약: ' + active.map((c) => `${G.CONTRACTS[c.id].name}(${G.CONTRACTS[c.id].type === 'cond' ? G.condProgressText(s, c) : `${G.contractDaysLeft(s, c)}일 남음`})`).join(' · '));
@@ -129,7 +130,7 @@ function show(s) {
     }
   }
   if (s.phase === 'pick') {
-    say(`▶ 입고 ${s.picksDone + 1}번째 (남은 ${s.picksLeft}) · \`pick <1-3>\`, \`reroll\`(잔금 ${G.rerollCost(s)})${s.freeTickets ? ', `reroll1`(1번만, 무료 이용권)' : ''}, \`skip\``);
+    say(`▶ 입고 ${s.picksDone + 1}번째 (남은 ${s.picksLeft}) · \`pick <1-3>\`, \`reroll\`(잔금 ${G.rerollCost(s)})${s.freeTickets ? ', `reroll1`(1번만, 무료 이용권)' : ''}, \`skip\`(잔금 +${G.skipBonus(s)})`);
     s.offers.forEach((o, i) => say(offerLine(s, o, i)));
   }
   if (s.phase === 'place') {
@@ -140,7 +141,7 @@ function show(s) {
   }
   if (s.phase === 'arrange') {
     const cost = G.extraCost(s), ex = G.expandCost(s);
-    say(`▶ 정리: \`open\`(영업)${G.extraBlocked(s) ? '' : `, \`extra\`(추가 입고 ${s.tickets ? '이용권' : `잔금 ${cost}`})`}${ex !== null ? `, \`expand\`(잔금 ${ex})` : ''}, \`move\`, \`merge\`, \`discard\`, \`undo\``);
+    say(`▶ 정리: \`open\`(영업)${G.extraBlocked(s) ? '' : `, \`extra\`(추가 입고 ${s.tickets ? '이용권' : `잔금 ${cost}`})`}${ex !== null ? `, \`expand\`(잔금 ${ex})` : ''}, \`upgrade <번호>\`, \`move\`, \`merge\`, \`discard\`(팔기), \`undo\``);
     if (!G.canOpen(s)) say('  (영업 전에 위의 결정을 먼저 하세요)');
   }
   if (s.phase === 'reward') {
@@ -174,10 +175,11 @@ const HELP = `명령:
   show                   현재 상태와 할 수 있는 일
   pick <1-3>             입고 후보 고르기 → place로 놓기
   place <x> <y> [회전]   손에 든 상품 놓기
-  skip                   이번 입고 넘기기
+  skip                   이번 입고 넘기기(잔금 조금)
   reroll / reroll1       후보 전체 새로고침(잔금) / 1번 자리만(무료 이용권)
   move <번호> <x> <y> [회전]   진열된 상품 옮기기
-  discard <번호>         상품 버리기
+  discard <번호>         상품 팔기(기본 매출 1.5배를 잔금으로)
+  upgrade <번호>         잔금(또는 이용권)으로 한 등급 올리기 · 하루 한 번, Ⅲ등급까지, 알 제외
   merge <번호|hand>      같은 상품·등급 3개 합성
   mut <A|B>              변이 고르기
   extra / expand         추가 입고 / 진열대 확장(잔금)
@@ -211,6 +213,7 @@ const ACT = {
   reroll1: (s) => G.rerollSlot1(s),
   move: (s) => G.movePiece(s, num(args[0], '번호'), num(args[1], 'x'), num(args[2], 'y'), args[3] ? num(args[3], '회전') : s.pieces.find((p) => p.uid === Number(args[0]))?.rot ?? 0),
   discard: (s) => G.discard(s, num(args[0], '번호')),
+  upgrade: (s) => G.upgrade(s, num(args[0], '번호')),
   merge: (s) => G.merge(s, args[0] === 'hand' ? 'hand' : num(args[0], '번호')),
   mut: (s) => G.chooseMutation(s, (args[0] ?? '').toUpperCase()),
   extra: (s) => G.buyExtra(s),
@@ -270,6 +273,11 @@ if (cmd === 'help') {
       fail(`${cmd} 실패: ${placeWhy(s, id, Number(x), Number(y), Number(r ?? 0))}`);
     }
     if (cmd === 'sign' && s.contractOffer?.ids.includes(args[0])) fail(`서명 불가: ${G.canSign(s, args[0]).why}`);
+    if (cmd === 'upgrade') {
+      const p = s.pieces.find((x) => x.uid === Number(args[0]));
+      const why = G.upgradeBlocked(s, p) ?? (s.pendingMutation ? '변이를 먼저 고르세요' : `잔금이 부족해요(필요 ${G.upgradeCost(s, p)})`);
+      fail(`등급 올리기 불가: ${why}`);
+    }
     fail(`\`${[cmd, ...args].join(' ')}\` 실행 불가 (단계 ${s.phase}). \`show\`로 할 수 있는 일을 확인하세요.`);
   }
   G.seeBrief(s);

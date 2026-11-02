@@ -257,7 +257,7 @@ export const CUSTOMERS = {
   keeper: { name: '마수 사육사', text: '마수·알 상품마다 +2×등급', fav: 'beast' },
   goblins: { name: '고블린 행상단', text: '같은 상품이 2개 이상이면 그 상품마다 +3' },
   noble: { name: '귀족 수집가', text: '중급 이상 상품마다 +6×(등급-1)' },
-  wanderers: { name: '떠돌이 시장 손님', text: '진열된 상품 종류마다 +3' },
+  wanderers: { name: '떠돌이 시장 손님', text: '진열된 상품 종류마다 +2 (최대 6종)' },
 };
 export const CUSTOMER_IDS = Object.keys(CUSTOMERS);
 export const CAT_GUEST = Object.fromEntries(Object.entries(CUSTOMERS).filter(([, c]) => c.fav).map(([id, c]) => [c.fav, id]));
@@ -488,8 +488,9 @@ export function evaluate(pieces, ctx) {
     }
     if (customer === 'noble') for (const p of pieces) if (p.g >= 2) add(p.uid, c.name, 6 * (p.g - 1) * mul, 'customer');
     if (customer === 'wanderers') {
+      // 서로 다른 종류마다 +2, 최대 6종(플레이 테스트에서 종류당 +3 무제한은 지나치게 셌다)
       const seen = new Set();
-      for (const p of pieces) if (!seen.has(p.id)) { seen.add(p.id); add(p.uid, c.name, 3 * mul, 'customer'); }
+      for (const p of pieces) if (!seen.has(p.id) && seen.size < 6) { seen.add(p.id); add(p.uid, c.name, 2 * mul, 'customer'); }
     }
   }
 

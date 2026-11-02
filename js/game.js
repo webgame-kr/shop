@@ -2,7 +2,7 @@
 // → 결산 보상 → 단골 제안. 상태는 JSON 하나로 저장되고, 무작위는 시드와 난수 상태를 함께 저장한다.
 import {
   ITEMS, ITEM_IDS, CUSTOMERS, CUSTOMER_IDS, CATS, CAT_IDS, CAT_GUEST, START_SIZE, EXPAND_STEPS, MAX_LIVES, GROW_NEED,
-  canPlace, anyFit, findSpot, evaluate, mergeSet, cellsOf, isEgg, displayName, growthCheck, neighborsOf,
+  canPlace, anyFit, findSpot, evaluate, mergeSet, cellsOf, isEgg, displayName, growthCheck, neighborsOf, gradeBase,
 } from './rules.js';
 
 export const PICKS_PER_DAY = 2;
@@ -21,9 +21,11 @@ const UNDO_LIMIT = 80;
 export function isSettleDay(d) { return d % SETTLE_EVERY === 0; }
 export function isContractDay(d) { return d % SETTLE_EVERY === 3 || (d > SETTLE_EVERY && d % SETTLE_EVERY === 1); }
 
+// 납부액 = a + b·n + c·n² (n = 날짜 - 1), 결산일은 ×1.35. 플레이 테스트 후 앞은 올리고 제곱 항은 줄였다.
+export const PAY = { a: 8, b: 8, c: 0.32 };
 export function basePay(d) {
   const n = d - 1;
-  const v = Math.round(6 + 4.6 * n + 0.34 * n * n);
+  const v = Math.round(PAY.a + PAY.b * n + PAY.c * n * n);
   return isSettleDay(d) ? Math.round(v * 1.35) : v;
 }
 
@@ -352,7 +354,7 @@ export function newGame(seed = (Math.random() * 2 ** 32) >>> 0, startCat = 'alch
     perma: Object.fromEntries(CAT_IDS.map((c) => [c, 0])), catBoost: {},
     mutations: {}, pendingMutation: null,
     favor: {}, regulars: [], regularOffer: null, main: null, everMain: false,
-    priority: null, tickets: 0, freeTickets: 0, mergeCount: 0, bonusPick: null, recentCats: [], recentContracts: [], doneContracts: [],
+    priority: null, tickets: 0, freeTickets: 0, mergeCount: 0, bonusPick: null, recentCats: [], recentContracts: [], doneContracts: [], upTickets: 0, upgrades: 0,
     grace: false, rerolls: 0, extras: 0, bonusGradeNext: false, forfeitReward: false,
     rewardOffer: null, undo: [], last: null, final: null, briefSeen: false,
   };
@@ -450,6 +452,11 @@ function drawSlot(s, role, taken, w) {
     s.pieces.filter((p) => isEgg(p)).forEach((p) => { count[p.id] = count[p.id] ?? 0; });
     const lacking = Object.keys(count).filter((id) => count[id] % 3 !== 0 || count[id] === 0);
     const owned = [...new Set(s.pieces.map((p) => p.id))];
+    // 빈칸이 거의 없으면 고르는 즉시 합성이 되는 상품(같은 상품 Ⅰ등급 2개)을 먼저
+    if (emptyCells(s).length <= 3) {
+      const r = pick(Object.keys(count).filter((id) => count[id] % 3 === 2), 'same', { complete: true });
+      if (r) return r;
+    }
     return pick(lacking, 'same') ?? pick(owned, 'same') ?? pick(all, 'new');
   }
   // 3번: 독점 입고 계약이면 그 분야, 아니면 최근 덜 나온 분야를 우선
@@ -457,6 +464,12 @@ function drawSlot(s, role, taken, w) {
   if (offer.cat) return pick(all.filter((id) => ITEMS[id].cat === offer.cat), 'exclusive', { cat: offer.cat });
   const owned = new Set(s.pieces.map((p) => p.id));
   const unowned = all.filter((id) => !owned.has(id));
+  // 성장 조건을 못 채운 알이 있으면 그 조건 상품을 자주 보여 준다
+  const need = eggNeeds(s).filter((n) => !taken.includes(n.id));
+  if (need.length && rand(s) < 0.6) {
+    const n = need[Math.floor(rand(s) * need.length)];
+    return { id: n.id, why: 'egg', egg: n.egg };
+  }
   const recent = s.recentCats.slice(-9);
   const rare = CAT_IDS.filter((c) => !recent.includes(c));
   if (rare.length && recent.length >= 6) {
@@ -464,6 +477,23 @@ function drawSlot(s, role, taken, w) {
     if (r) return r;
   }
   return pick(unowned, 'new') ?? pick(all, 'new');
+}
+
+// 성장 조건을 아직 못 채운 알과, 옆에 두면 조건이 채워지는 상품들
+const EGG_NEEDS = {
+  wyvern: (id) => ITEMS[id].cat === 'food',
+  snail: (id) => id === 'herb' || id === 'mushroom',
+  mimic: (id) => ITEMS[id].cat === 'treasure',
+  griffin: (id) => ITEMS[id].cat === 'gear',
+};
+function eggNeeds(s) {
+  const gc = growthCheck(s.pieces, s.dim, sealedNow(s));
+  const out = [];
+  for (const p of s.pieces) {
+    if (!isEgg(p) || gc.get(p.uid)?.met || !EGG_NEEDS[p.id]) continue;
+    for (const id of ITEM_IDS) if (EGG_NEEDS[p.id](id) && !ITEMS[id].egg) out.push({ id, egg: ITEMS[p.id].egg.name });
+  }
+  return out;
 }
 
 // 후보 세 자리: 1 주력 단골(또는 시작 분야) · 2 보유 상품 · 3 새로운 상품. 같은 상품은 한 묶음에 한 번.
@@ -547,9 +577,13 @@ export function choose(s, index) {
   return true;
 }
 
+// 입고를 넘기면 작은 잔금을 받는다(꽉 찬 진열대에서도 넘기기가 손해만은 아니게)
+export function skipBonus(s) { return 2 + Math.floor(s.day / 4); }
+
 export function skip(s) {
   if (s.phase !== 'pick' && s.phase !== 'place') return false;
   snapshot(s);
+  s.balance += skipBonus(s);
   afterPick(s);
   return true;
 }
@@ -583,10 +617,49 @@ export function movePiece(s, uid, x, y, rot) {
   return true;
 }
 
+// 진열대에서 빼면 기본 매출의 1.5배(알은 알 매출)를 잔금으로 돌려받는다
+export function sellValue(p) {
+  return isEgg(p) ? ITEMS[p.id].egg.base : Math.max(1, Math.round(gradeBase(p.id, p.g) * 1.5));
+}
+
 export function discard(s, uid) {
-  if (!prep(s) || !s.pieces.some((p) => p.uid === uid)) return false;
+  const p = s.pieces.find((q) => q.uid === uid);
+  if (!prep(s) || !p) return false;
   snapshot(s);
-  s.pieces = s.pieces.filter((p) => p.uid !== uid);
+  s.pieces = s.pieces.filter((q) => q.uid !== uid);
+  s.balance += sellValue(p);
+  return true;
+}
+
+/* ---------- 후반 성장: 잔금으로 등급 올리기 ---------- */
+
+// 알은 올릴 수 없고, 등급 올리기로는 Ⅲ등급까지만(그 위는 합성), 하루 한 번. 이용권이 있으면 무료.
+// 등급마다 매출이 약 2.4배라 제한 없이 사면 납부액보다 빨리 불어난다(시뮬레이션에서 80일 넘게 생존).
+export const UPGRADE_MAX = 3;
+export function upgradeBlocked(s, p) {
+  if (!p) return '상품을 골라 주세요';
+  if (isEgg(p)) return '알은 올릴 수 없어요';
+  if (p.g >= UPGRADE_MAX) return `${UPGRADE_MAX}등급부터는 합성으로만 올라가요`;
+  if (s.upgradedDay === s.day) return '등급 올리기는 하루 한 번이에요';
+  return null;
+}
+export function upgradeCost(s, p) {
+  if (!p || isEgg(p) || p.g >= UPGRADE_MAX) return null;
+  if ((s.upTickets ?? 0) > 0) return 0;
+  return Math.round(gradeBase(p.id, p.g + 1) * 6 + 25 * p.g + 10 * (s.upgrades ?? 0)); // 쓸수록 비싸진다
+}
+
+export function upgrade(s, uid) {
+  const p = s.pieces.find((q) => q.uid === uid);
+  const cost = upgradeCost(s, p);
+  if (!prep(s) || s.pendingMutation || cost === null || upgradeBlocked(s, p) || s.balance < cost) return false;
+  snapshot(s);
+  s.upgradedDay = s.day;
+  if (cost === 0) s.upTickets--;
+  else s.balance -= cost;
+  p.g++;
+  s.upgrades = (s.upgrades ?? 0) + 1;
+  maybeMutation(s, p.id, p.g);
   return true;
 }
 
@@ -968,6 +1041,7 @@ export const REWARDS = {
   grade: { name: '중급 입고', text: '내일 첫 입고 후보가 모두 중급' },
   life: { name: '영혼의 불꽃 회복', text: '꺼진 불꽃 하나를 다시 밝혀요' },
   cash: { name: '마왕의 팁', text: '잔금 +30' },
+  upgrade: { name: '등급 올리기 이용권', text: '진열 중인 상품 하나를 잔금 없이 한 등급 올려요(알 제외)' },
 };
 
 function drawRewards(s) {
@@ -976,6 +1050,7 @@ function drawRewards(s) {
   const pool = ['perma_alch', 'perma_gear', 'perma_magic', 'grade', 'cash'];
   if (s.expand < EXPAND_STEPS.length) pool.push('expand', 'expand');
   if (s.lives < MAX_LIVES) pool.push('life', 'life');
+  if (s.pieces.some((p) => !isEgg(p))) pool.push('upgrade', 'upgrade');
   while (out.length < 3 && pool.length) {
     const k = pool[Math.floor(rand(s) * pool.length)];
     if (!out.includes(k)) out.push(k);
@@ -995,6 +1070,7 @@ export function takeReward(s, key, arg = null) {
   if (key === 'grade') s.bonusGradeNext = true;
   if (key === 'life') s.lives = Math.min(MAX_LIVES, s.lives + 1);
   if (key === 'cash') s.balance += 30;
+  if (key === 'upgrade') s.upTickets = (s.upTickets ?? 0) + 1;
   s.rewardOffer = null;
   if (s.regulars.length) { s.phase = 'mainpick'; return true; }
   nextDay(s);
