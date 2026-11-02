@@ -200,9 +200,14 @@ div.cell { cursor: default; }
 
 .piece.selected .pc { outline: .55cqw solid var(--flame); outline-offset: -.55cqw; }
 .piece.lifted { opacity: .35; }
-.piece.mat { opacity: .45; }
-.piece.mat .pc { outline: .55cqw dashed var(--flame); outline-offset: -.55cqw; }
-.piece.result .pc { outline: .7cqw solid var(--flame); outline-offset: -.7cqw; }
+/* 합성 미리보기: 재료는 밝은 주황 점선과 빛으로, 결과는 굵은 실선과 강한 빛으로 */
+.piece.mat { z-index: 2; }
+.piece.mat .pc { background-color: #5a3a35; outline: .6cqw dashed #FFB27A; outline-offset: -.6cqw; box-shadow: 0 0 2.6cqw rgba(255, 138, 61, .7); animation: matPulse 1.2s ease-in-out infinite; }
+.piece.mat .pc::after { content: ""; position: absolute; inset: 0; background: rgba(255, 178, 122, .16); pointer-events: none; }
+.piece.result { z-index: 3; }
+.piece.result .pc { outline: .8cqw solid var(--flame); outline-offset: -.8cqw; box-shadow: 0 0 3.4cqw rgba(255, 138, 61, .9); }
+@keyframes matPulse { 50% { box-shadow: 0 0 1cqw rgba(255, 138, 61, .35); } }
+@media (prefers-reduced-motion: reduce) { .piece.mat .pc { animation: none; } }
 .ghost { z-index: 3; }
 .ghost .pc { outline: .7cqw solid var(--flame); outline-offset: -.7cqw; transform: translateY(-.8cqw); box-shadow: 0 1.6cqw 2cqw rgba(0, 0, 0, .4); }
 .ghost .lbl { transform: translateY(-.8cqw); }
