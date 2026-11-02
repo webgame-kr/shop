@@ -41,6 +41,17 @@
       </div>
     </section>
 
+    <!-- 17 시작 분야 선택 -->
+    <section id="screen-startpick" class="screen startpick" hidden>
+      <p class="sp-k">새 계약서 · 1일 차 전</p>
+      <h2 class="sp-title">어떤 상점으로 시작할까요?</h2>
+      <p class="sp-lead">첫 단골을 얻기 전까지 입고 후보 한 자리가 이 분야에서 나와요. 관련 손님은 <b>2일 차</b>에 처음 찾아와요.</p>
+      <div class="sp-grid" id="sp-grid"></div>
+      <div class="sp-guest" id="sp-guest"></div>
+      <p class="fine" id="sp-note"></p>
+      <div class="actions solo"><button class="btn primary big" id="btn-startpick" disabled>분야를 골라 주세요</button></div>
+    </section>
+
     <!-- 02 영업 예고 -->
     <section id="screen-morning" class="screen morning" hidden>
       <header class="top"><h2 class="ttl"><b id="m-day"></b> <small>아침</small></h2><div class="status" id="m-status"></div></header>
@@ -143,6 +154,17 @@
       <div class="actions solo"><button class="btn primary big" id="btn-reward" disabled>보상을 골라 주세요</button></div>
     </section>
 
+    <!-- 21 결산 · 주력 단골 -->
+    <section id="screen-settlemain" class="screen settlemain" hidden>
+      <header class="top"><h2 class="ttl"><b id="sm-day"></b> <small>결산</small></h2><div class="status" id="sm-status"></div></header>
+      <h3 class="scr-title gold">결산일 납부 성공</h3>
+      <div id="sm-reward"></div>
+      <div class="sect"><h3>내일부터 주력 단골</h3></div>
+      <div class="sm-mains" id="sm-mains"></div>
+      <p class="fine">결산 보상은 한 번만 받아요. 주력을 바꿔도 이번 보상을 다시 받을 수 없고, 이미 나온 후보는 바뀌지 않아요.</p>
+      <div class="actions solo"><button class="btn primary big" id="btn-settlemain"></button></div>
+    </section>
+
     <!-- 06 압류 통지서 -->
     <section id="screen-result" class="screen result" hidden>
       <div class="notice" id="notice"></div>
@@ -193,8 +215,8 @@
     <form method="dialog"><button class="round close" aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></form>
     <h2>도감</h2>
     <div class="tabs" role="tablist">
-      <button role="tab" class="tab" data-tab="items" aria-selected="true">상품 24종</button>
-      <button role="tab" class="tab" data-tab="guests" aria-selected="false">손님 6종</button>
+      <button role="tab" class="tab" data-tab="items" aria-selected="true">상품 42종</button>
+      <button role="tab" class="tab" data-tab="guests" aria-selected="false">손님 9종</button>
     </div>
     <div class="filters" id="codex-filters"></div>
     <div id="codex-body"></div>

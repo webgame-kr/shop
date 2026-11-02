@@ -2,7 +2,8 @@
 // → 계약(즉시·기간·조건) → 납부와 판정 → 결산 보상 → 단골 제안 → … → 압류 통지서.
 // 선택 후 위치 누르기가 기본이고 끌기는 보조. 모든 주요 선택 뒤 자동 저장.
 import {
-  ITEMS, ITEM_IDS, CATS, CUSTOMERS, MAX_LIVES, EXPAND_STEPS, DIRECTIONAL,
+  ITEMS, ITEM_IDS, CATS, CAT_IDS, CAT_GUEST, CUSTOMERS, MAX_LIVES, EXPAND_STEPS, DIRECTIONAL, GROW_NEED,
+  isEgg, displayName, imgKey, growthCheck,
   shapeOf, sizeOf, cellsOf, clampAnchor, canPlace, occupancy, gradeBase, gradeLabel, roman, effectText, anyFit,
   mutName, mutText, evaluate,
 } from './rules.js';
@@ -26,8 +27,22 @@ const guestImg = (id) => `img/guest_${id}.png`;
 const GUEST_LIKE = {
   adventurers: '모험 장비 상품에 보너스 매출', witches: '연금술 상품에 보너스 매출', school: '마법 잡화에 보너스 매출',
   goblins: '같은 상품이 여러 개면 보너스', noble: '높은 등급 상품을 좋아해요', wanderers: '서로 다른 상품 종류에 보너스',
+  ogre: '마계 식품에 보너스 매출', dwarf: '보물·귀금속에 보너스 매출', keeper: '마수·알에 보너스 매출',
 };
-const SHORT = { adventurers: '모험가', witches: '마녀', school: '마법학교', goblins: '고블린', noble: '귀족', wanderers: '떠돌이' };
+const SHORT = { adventurers: '모험가', witches: '마녀', school: '마법학교', goblins: '고블린', noble: '귀족', wanderers: '떠돌이', ogre: '미식회', dwarf: '보석상', keeper: '사육사' };
+const catIcon = (cat, cls = 'caticon') => `<img class="${cls}" src="img/cat_${cat}.png" alt="">`;
+const regEffect = (g) => `주력이면 입고 1번 자리 ${CATS[CUSTOMERS[g].fav].name}`;
+// 하트 6칸: 1 관심 · 2 단골 · 4 친한 단골 · 6 VIP 경계마다 칸막이
+function heartsHTML(f) {
+  let h = '';
+  for (let i = 1; i <= 6; i++) h += `<i class="${i <= f ? 'on' : ''}">${i <= f ? '♥' : '♡'}</i>${[1, 2, 4].includes(i) ? '<b class="sep"></b>' : ''}`;
+  return `<span class="hearts6">${h}</span>`;
+}
+function stageLine(g) {
+  const f = s.favor[g] ?? 0;
+  const st = G.stageOf(f), nx = G.nextStage(f);
+  return `${st ? st.name : '처음 보는 손님'}${nx ? ` · ${nx.name}까지 호감 ${nx.at - f}` : ''}`;
+}
 const MUT_WAY = {
   self: '운영 방식 · 자기 매출 집중', aura: '운영 방식 · 주변 상품 지원', focus: '운영 방식 · 대상 하나 집중 지원',
   cond: '운영 방식 · 조건 달성형', guest: '운영 방식 · 특정 손님 전문화',
@@ -58,14 +73,14 @@ function save() {
 }
 function loadRun() {
   const r = store.get(KEY_RUN);
-  return r && r.v === 3 && Array.isArray(r.pieces) ? r : null;
+  return r && r.v === 4 && Array.isArray(r.pieces) ? r : null;
 }
 const bestRecord = () => store.get(KEY_BEST);
 const tutorialDone = () => store.get(KEY_TUTORIAL) === true;
 
 /* ---------- 화면 전환 ---------- */
 
-const SCREENS = ['start', 'morning', 'play', 'contract', 'judge', 'mutation', 'regular', 'reward', 'result'];
+const SCREENS = ['start', 'startpick', 'morning', 'play', 'contract', 'judge', 'mutation', 'regular', 'reward', 'settlemain', 'result'];
 function show(name) {
   for (const id of SCREENS) $(`screen-${id}`).hidden = id !== name;
   window.scrollTo(0, 0);
@@ -75,6 +90,7 @@ function route() {
   if (s.phase === 'over') return showResult();
   if (s.pendingMutation) { pickedMut = null; S.play('mutation_open'); return showMutation(); }
   if (s.phase === 'reward') return showReward();
+  if (s.phase === 'mainpick') return showSettleMain();
   if (s.regularOffer) return showRegular();
   if (!s.briefSeen) return showMorning();
   show('play');
@@ -92,8 +108,27 @@ function goStart() {
   show('start');
 }
 
-function startNew() {
-  s = G.newGame();
+let pickedStart = null;
+function showStartPick() {
+  pickedStart = null;
+  renderStartPick();
+  show('startpick');
+}
+function renderStartPick() {
+  const art = { alch: 'potion', gear: 'sword', magic: 'orb', food: 'lavabread', treasure: 'ruby', beast: 'slime_egg' };
+  $('sp-grid').innerHTML = CAT_IDS.map((c) => `<button class="sp-card${pickedStart === c ? ' sel' : ''}" data-start="${c}">
+    ${catIcon(c, 'sp-icon')}<span class="sp-art"><img src="img/${art[c]}.png" alt=""></span><b>${CATS[c].name}</b><small>${CATS[c].short}</small></button>`).join('');
+  const g = pickedStart ? CAT_GUEST[pickedStart] : null;
+  $('sp-guest').innerHTML = g ? `<img src="${guestImg(g)}" alt=""><p><b>${CUSTOMERS[g].name}</b>가 2일 차에 와요. ${G.REGULAR[g].cond}하면 호감도 +1.</p>` : '';
+  $('sp-guest').hidden = !g;
+  $('sp-note').textContent = `이 지원은 첫 주력 단골을 얻거나 ${G.START_SUPPORT_UNTIL}일 차가 끝나면 종료돼요.`;
+  const b = $('btn-startpick');
+  b.disabled = !pickedStart;
+  b.textContent = pickedStart ? `${CATS[pickedStart].name.split('·')[0]} 상점으로 시작` : '분야를 골라 주세요';
+}
+
+function startNew(cat = 'alch') {
+  s = G.newGame(undefined, cat);
   resetSelection();
   save();
   route();
@@ -152,7 +187,8 @@ function guestCard(id, label, off = false) {
   const c = CUSTOMERS[id];
   const fav = s.favor[id] ?? 0;
   const reg = s.regulars.includes(id) ? ' · 단골' : fav ? ` · 호감 ${'♥'.repeat(fav)}` : '';
-  return `<span class="k">${label}${reg}</span><img src="${guestImg(id)}" alt=""><b>${c.name}</b><p>${off ? '계약 때문에 오늘은 효과가 없어요' : GUEST_LIKE[id]}<br><small>호감 조건: ${G.REGULAR[id].cond}</small></p>`;
+  const cond = G.REGULAR[id] ? `호감 조건: ${G.REGULAR[id].cond}${label.startsWith('오늘') ? (G.guestCondMet(s, id) ? ' · 충족' : ' · 아직') : ''}` : '특별 손님 · 단골이 되지 않아요';
+  return `<span class="k">${label}${reg}</span><img src="${guestImg(id)}" alt=""><b>${c.name}</b><p>${off ? '계약 때문에 오늘은 효과가 없어요' : GUEST_LIKE[id]}<br><small>${cond}</small></p>`;
 }
 
 function conflictText() {
@@ -191,7 +227,7 @@ function showMorning() {
   const active = G.activeContracts(s);
   let html = '';
   if (s.regulars.length) html += `<div class="sect"><h3>단골</h3><span>${s.regulars.length} / 2</span></div>` +
-    s.regulars.map((g) => `<div class="c-row"><div><b>${CUSTOMERS[g].name}</b><small>${G.REGULAR[g].effect}</small></div></div>`).join('');
+    s.regulars.map((g) => `<div class="c-row"><div><b>${CUSTOMERS[g].name}${s.main === g ? ' <span class="main-tag">주력</span>' : ''}</b><small>${stageLine(g)}${s.main === g ? ` · ${CATS[CUSTOMERS[g].fav].name} 입고 1번 자리` : ''}</small></div>${heartsHTML(s.favor[g] ?? 0)}</div>`).join('');
   if (active.length) html += `<div class="sect"><h3>진행 중인 계약</h3><span>${active.length} / 2</span></div>` + active.map(contractLine).join('');
   const warn = conflictText();
   if (warn) html += `<p class="warn">${warn}</p>`;
@@ -245,7 +281,7 @@ function picHTML(dim, p, b, textRows) {
   const turned = deg % 180 === 90;
   const [mw, mh] = turned ? [h, w] : [w, h];
   return `<span class="pic" style="width:${w}cqw;height:${h}cqw">` +
-    `<img src="${itemImg(p.id)}" alt="" style="max-width:${mw}cqw;max-height:${mh}cqw;transform:translate(-50%,-50%)${deg ? ` rotate(${deg}deg)` : ''}"></span>`;
+    `<img src="${itemImg(imgKey(p))}" alt="" style="max-width:${mw}cqw;max-height:${mh}cqw;transform:translate(-50%,-50%)${deg ? ` rotate(${deg}deg)` : ''}"></span>`;
 }
 
 function pieceHTML(dim, p, { cls = '', sub = '', tag = '', rows = sub ? 1 : 0 } = {}) {
@@ -254,7 +290,7 @@ function pieceHTML(dim, p, { cls = '', sub = '', tag = '', rows = sub ? 1 : 0 } 
   const it = ITEMS[p.id];
   const g = p.g ?? 1;
   const m = g >= 2 ? s?.mutations?.[p.id] : null;
-  let html = `<div class="piece g${Math.min(g, 6)} ${cls}" style="--cat:${CATS[it.cat].color}" data-uid="${p.uid ?? ''}" aria-label="${gradeLabel(g)} ${it.name}${m ? ` ${mutName(p.id, m)}` : ''}">`;
+  let html = `<div class="piece g${Math.min(g, 6)} ${cls}" style="--cat:${CATS[it.cat].color}" data-uid="${p.uid ?? ''}" aria-label="${gradeLabel(g)} ${displayName(p)}${m ? ` ${mutName(p.id, m)}` : ''}${isEgg(p) ? ` 성장 ${p.grow ?? 0}/${GROW_NEED}` : ''}">`;
   for (const [x, y] of cells) {
     const out = [!has(x, y - 1), !has(x + 1, y), !has(x, y + 1), !has(x - 1, y)];
     const c = [];
@@ -268,7 +304,7 @@ function pieceHTML(dim, p, { cls = '', sub = '', tag = '', rows = sub ? 1 : 0 } 
   const b = labelBox(p);
   html += `<div class="lbl" style="left:${pct(b.x, dim.cols)}%;top:${pct(b.y, dim.rows)}%;width:${pct(b.w, dim.cols)}%;height:${pct(b.h, dim.rows)}%">` +
     `<span class="gtag">${roman(g)}</span>${m ? hexHTML(p.id, m) : ''}${g >= 4 ? `<span class="gnum">${g}</span>` : ''}` +
-    `${picHTML(dim, p, b, rows)}${sub}${tag}</div></div>`;
+    `${picHTML(dim, p, b, rows)}${isEgg(p) ? `<span class="growpill">${p.grow ?? 0}/${GROW_NEED}</span>` : ''}${sub}${tag}</div></div>`;
   return html;
 }
 
@@ -379,7 +415,10 @@ function commit() {
   if (!ok) return false;
   markSparks(before);
   S.play('item_place');
-  if (spark.size) S.play('coin_tick', { delay: 0.15 });
+  const sparkCats = [...spark].map((u) => ITEMS[s.pieces.find((p) => p.uid === u)?.id]?.cat);
+  if (sparkCats.includes('food')) S.play('food_set', { delay: 0.15 });
+  else if (sparkCats.includes('treasure')) S.play('treasure_shine', { delay: 0.15 });
+  else if (spark.size) S.play('coin_tick', { delay: 0.15 });
   press = uid;
   select(null);
   if (s.phase === 'pick') S.play('restock_new', { delay: 0.25 });
@@ -485,13 +524,21 @@ function render() {
   renderActions(coach);
 }
 
-// 접을 수 있는 정보 줄: 손님 · 단골 · 계약
+// 접을 수 있는 준비 패널: 주력·단골 호감도, 오늘·내일 손님과 호감 조건, 계약
+function guestLine(label, g, today) {
+  const c = CUSTOMERS[g];
+  if (!G.REGULAR[g]) return `<dt>${label}</dt><dd>${c.name} · 특별 손님 · ${GUEST_LIKE[g]}</dd>`;
+  const st = G.stageOf(s.favor[g] ?? 0);
+  const met = G.guestCondMet(s, g);
+  return `<dt>${label}</dt><dd>${c.name}${st ? ` · ${st.name}` : ''} · ${G.REGULAR[g].cond} ${met ? `<span class="okc">충족${today ? ' → 영업 후 호감 +1' : ''}</span>` : '<span class="noc">아직</span>'}</dd>`;
+}
+
 function renderStrip() {
   const today = G.customerOn(s, s.day), tomorrow = G.customerOn(s, s.day + 1);
-  const { mods } = G.modsFor(s);
   const active = G.activeContracts(s);
   const soon = active.map((c) => G.contractDaysLeft(s, c)).sort((a, b) => a - b)[0];
-  $('strip-sum').innerHTML = `손님 <b>${SHORT[today]}</b> → <b>${SHORT[tomorrow]}</b> · 단골 <b>${s.regulars.length}/2</b> · 계약 <b>${active.length}/2</b>` +
+  const lead = s.main ? `주력 <b>${SHORT[s.main]}</b>` : G.startSupport(s) ? `시작 분야 <b>${CATS[s.startCat].name}</b>` : '단골 <b>없음</b>';
+  $('strip-sum').innerHTML = `${lead} · 손님 <b>${SHORT[today]}</b> → <b>${SHORT[tomorrow]}</b> · 계약 <b>${active.length}/2</b>` +
     (soon ? ` <span class="due">마감 D-${soon - 1}</span>` : '') + (s.contractOffer ? ' · <span class="due">제안 도착</span>' : '');
   const head = $('strip-head');
   head.setAttribute('aria-expanded', String(stripOpen));
@@ -500,15 +547,23 @@ function renderStrip() {
   chips.hidden = !stripOpen && !s.contractOffer;
   let html = '';
   if (stripOpen) {
-    html += `<span class="chip"><img src="${guestImg(today)}" alt="">오늘 ${CUSTOMERS[today].name}${mods.noCustomer ? ' (효과 없음)' : ''}</span>` +
-      `<span class="chip"><img src="${guestImg(tomorrow)}" alt="">내일 ${CUSTOMERS[tomorrow].name}</span>`;
-    for (const r of s.regulars) html += `<span class="chip"><img src="${guestImg(r)}" alt="">단골 · ${G.REGULAR[r].effect}</span>`;
-    for (const c of active) {
-      const t = G.CONTRACTS[c.id];
-      html += `<button class="chip contract" data-go="contract-info" data-c="${c.id}">📜 ${t.name} · ${t.type === 'cond' ? G.condProgressText(s, c) : `${G.contractDaysLeft(s, c)}일 남음`}</button>`;
+    html += '<div class="prep">';
+    if (s.regulars.length) {
+      html += s.regulars.map((g) => {
+        const f = s.favor[g] ?? 0;
+        const nx = G.nextStage(f);
+        return `<div class="prow"><img class="pface${s.main === g ? ' main' : ''}" src="${guestImg(g)}" alt="">
+          <div><b>${CUSTOMERS[g].name}</b>${s.main === g ? '<span class="main-tag">주력</span>' : ''}<small class="stg">${G.stageOf(f)?.name ?? ''}</small>
+          ${heartsHTML(f)}<small>${nx ? `${nx.name}까지 호감 ${nx.at - f}` : '최고 단계'}${s.main === g ? ` · ${CATS[CUSTOMERS[g].fav].name} 입고 1번 자리` : ''}</small></div></div>`;
+      }).join('');
+    } else if (G.startSupport(s)) {
+      html += `<p class="pnote">아직 단골이 없어요. ${G.START_SUPPORT_UNTIL}일 차까지 입고 1번 자리는 시작 분야(${CATS[s.startCat].name})에서 나와요.</p>`;
     }
-    if (s.priority) html += `<span class="chip k">★ 우선 입고 ${ITEMS[s.priority].name}</span>`;
-    if (s.tickets) html += `<span class="chip k">🎟 추가 입고 이용권 ${s.tickets}장</span>`;
+    html += `<dl class="pguests">${guestLine('오늘', today, true)}${guestLine('내일', tomorrow, false)}</dl>`;
+    if (active.length) html += `<div class="pcons">${active.map((c) => { const t = G.CONTRACTS[c.id]; return `<button class="chip contract" data-go="contract-info" data-c="${c.id}">📜 ${t.name} · ${t.type === 'cond' ? G.condProgressText(s, c) : `${G.contractDaysLeft(s, c)}일 남음`}</button>`; }).join('')}</div>`;
+    const extra = [s.priority ? `★ 우선 입고 ${ITEMS[s.priority].name}` : '', s.freeTickets ? `🎟 1번 다시 뽑기 ${s.freeTickets}장` : '', s.tickets ? `추가 입고 이용권 ${s.tickets}장` : ''].filter(Boolean);
+    if (extra.length) html += `<p class="pnote">${extra.join(' · ')}</p>`;
+    html += '</div>';
   }
   if (s.contractOffer) html += `<button class="chip offer" data-go="contract">📜 계약 제안 ${s.contractOffer.ids.length}건 · 영업 전에 결정</button>`;
   chips.innerHTML = html;
@@ -523,28 +578,73 @@ function coachHTML(step, dir) {
   return `<div class="coach ${dir}"><div class="step">안내 ${step} / 3</div><div class="ttl2">${t[0]}</div><p class="body">${t[1]}</p></div>`;
 }
 
-const WHY = { same: '진열 중인 상품과 같은 종류', guest: '오늘·내일 손님·단골이 좋아해요', new: '새로운 선택', reward: '보상 입고' };
+function whyText(o, i) {
+  const same = s.pieces.filter((p) => p.id === o.id && p.g === s.offerGrade && !isEgg(p)).length;
+  const role = {
+    main: `${SHORT[s.main] ?? ''} 추천`, start: '시작 분야 추천', same: '보유 상품', new: '새로운 상품', exclusive: '독점 입고', reward: '보상 입고',
+  }[o.why] ?? '';
+  const extra = [];
+  if (o.why === 'same' && same > 0 && same < 3) extra.push(`합성까지 ${3 - same - 1 > 0 ? `${3 - same - 1}개` : '1개'}`);
+  if (o.rare) extra.push('오랜만의 분야');
+  if (o.prio) extra.push('★ 우선 입고');
+  return `${i + 1} · ${[role, ...extra].join(' · ')}`;
+}
 
 function renderOffers(coach) {
-  const fav = CUSTOMERS[G.customerOn(s, s.day)].fav;
+  const rewardPick = s.offers.every((o) => o.why === 'reward');
+  const banner = rewardPick
+    ? `<div class="main-banner">${catIcon(ITEMS[s.offers[0].id].cat, 'bicon')}<div><b>주력 단골 보상 · ${CATS[ITEMS[s.offers[0].id].cat].name} ${roman(s.offerGrade)}등급</b><small>셋 중 하나를 골라요 · 이번 입고 1번에 포함</small></div></div>`
+    : s.main
+    ? `<div class="main-banner"><img src="${guestImg(s.main)}" alt=""><div><b>주력 단골 · ${CUSTOMERS[s.main].name}</b>${G.stageOf(s.favor[s.main] ?? 0) ? `<span class="main-tag soft">${G.stageOf(s.favor[s.main] ?? 0).name}</span>` : ''}<small>입고 1번 자리를 ${CATS[CUSTOMERS[s.main].fav].name} 상품으로 채워요</small></div></div>`
+    : G.startSupport(s) ? `<div class="main-banner">${catIcon(s.startCat, 'bicon')}<div><b>시작 분야 · ${CATS[s.startCat].name}</b><small>첫 단골 전까지(${G.START_SUPPORT_UNTIL}일 차) 1번 자리를 채워요</small></div></div>` : '';
   const rows = s.offers.map((o, i) => {
     const it = ITEMS[o.id];
-    const same = s.pieces.filter((p) => p.id === o.id && p.g === s.offerGrade).length;
-    const why = [o.prio ? '★ 우선 입고' : null, WHY[o.why], same >= 2 ? '합성 재료 완성' : same === 1 ? '합성까지 1개' : null,
-      o.why !== 'guest' && fav === it.cat ? '오늘 손님 선호' : null].filter(Boolean).join(' · ');
-    return `<button class="orow${pickedOffer === i ? ' sel' : ''}${coach === 1 && i === 0 && pickedOffer === null ? ' hl' : ''}" data-offer="${i}">
-      <span class="art"><img src="${itemImg(o.id)}" alt=""></span>
-      <span class="body"><span class="nm">${it.name}<span class="r">${roman(s.offerGrade)}</span><span class="cat" style="background:${CATS[it.cat].color}">${CATS[it.cat].name}</span></span>
-      <span class="why">${why}</span><span class="eff">${it.cells.length}칸 · 기본 ${gradeBase(o.id, s.offerGrade)} · ${effectText(o.id, s.offerGrade)}</span></span></button>`;
+    const egg = !!it.egg;
+    const name = egg ? it.egg.name : it.name;
+    const desc = egg ? `성장 전 · ${it.egg.grow}` : effectText(o.id, s.offerGrade);
+    return `<div class="oslot"><span class="otag t${o.why}">${whyText(o, i)}</span>
+      <button class="orow${pickedOffer === i ? ' sel' : ''}${coach === 1 && i === 0 && pickedOffer === null ? ' hl' : ''}" data-offer="${i}">
+      <span class="art"><img src="${itemImg(egg ? `${o.id}_egg` : o.id)}" alt=""></span>
+      <span class="body"><span class="nm">${name}<span class="r">${roman(s.offerGrade)}</span><span class="cat" style="background:${CATS[it.cat].color}">${catIcon(it.cat, 'mini-ic')}${CATS[it.cat].name}</span></span>
+      <span class="eff">${it.cells.length}칸 · 기본 ${egg ? it.egg.base : gradeBase(o.id, s.offerGrade)} · ${desc}</span></span></button></div>`;
   }).join('');
-  const sum = `<dl class="offer-sum"><dt>우선 입고</dt><dd>${s.priority ? `${ITEMS[s.priority].name} <small>(다음 결산일에 변경)</small>` : '<small>없음 · 결산 보상으로 지정</small>'}</dd>` +
-    `<dt>단골</dt><dd>${s.regulars.length ? s.regulars.map((g) => CUSTOMERS[g].name).join(' · ') : '<small>아직 없음</small>'}</dd></dl>`;
-  $('panel').innerHTML = (coach ? coachHTML(coach, 'down') : '') +
-    `<div class="panel-head"><h3>오늘의 후보</h3></div><p class="fine" style="margin:0 0 10px">후보마다 왜 나왔는지 표시돼요. 같은 상품은 한 묶음에 두 번 나오지 않아요.</p>` +
-    `<div class="offer-list">${rows}</div>${sum}`;
+  const cost = G.rerollCost(s);
+  const one = s.freeTickets > 0 && G.slot1Cat(s) && !s.offerCat
+    ? `<button class="btn rr one" data-act="reroll-one">1번만 다시 뽑기<small>무료 이용권 ${s.freeTickets} / ${G.MAX_TICKETS}</small></button>` : '';
+  const all = `<button class="btn rr" data-act="reroll-all" ${s.balance < cost ? 'disabled' : ''}>전체 새로고침<small>${cost === 0 ? (s.grace ? '마왕의 유예 · 무료' : '무료') : `잔금 ${cost}`} · 자리 역할 유지</small></button>`;
+  $('panel').innerHTML = (coach ? coachHTML(coach, 'down') : '') + banner +
+    `<div class="offer-list">${rows}</div>${rewardPick ? '' : `<div class="rr-row${one ? '' : ' single'}">${one}${all}</div>`}` +
+    (one ? '<p class="fine center">다시 뽑아도 같은 상품이 나올 수 있어요</p>' : '');
+}
+
+function eggDetailHTML(item, acts) {
+  const it = ITEMS[item.id];
+  const gc = item.uid > 0 ? growthCheck(s.pieces, s.dim, G.sealedNow(s)).get(item.uid) : null;
+  const res = !gc ? '진열한 뒤 조건을 채우면 영업이 끝날 때 성장해요'
+    : gc.gain ? (gc.to >= GROW_NEED ? '<b>영업이 끝나면 성장 완료</b> · 새 매출은 내일부터' : `영업이 끝나면 성장 ${gc.from} → ${gc.to}`)
+    : `그대로 ${gc.from}/${GROW_NEED}`;
+  return `<div class="detail egg">
+    <div class="evo"><span><img src="${itemImg(`${item.id}_egg`)}" alt=""></span><i>→</i><span><img src="${itemImg(item.id)}" alt=""></span></div>
+    <div class="dh"><span class="nm">${it.egg.name} · 성장 ${item.grow ?? 0}/${GROW_NEED}</span><span class="cat" style="background:${CATS.beast.color}">${catIcon('beast', 'mini-ic')}마수·알</span><span class="acts">${acts}</span></div>
+    <dl><dt>성장 조건</dt><dd>${it.egg.grow}${gc ? (gc.met ? ` <span class="okc">충족 (${gc.why})</span>` : ' <span class="noc">아직</span>') : ''}</dd>
+      <dt>둥지 지원</dt><dd>${gc?.nest ? '<span class="okc">정령 둥지와 붙어 있음 · +1</span>' : '없음 · 정령 둥지와 붙으면 +1'}</dd>
+      <dt>오늘 결과</dt><dd>${res}</dd>
+      <dt>성장 후</dt><dd>${it.name} · 기본 ${gradeBase(item.id, item.g ?? 1)}</dd></dl>
+    <p class="hint">성장 전에는 합성할 수 없어요. 자라도 칸 모양은 그대로예요.</p></div>`;
+}
+
+function eggListHTML(exceptUid) {
+  const gc = growthCheck(s.pieces, s.dim, G.sealedNow(s));
+  const rows = s.pieces.filter((p) => isEgg(p) && p.uid !== exceptUid).map((p) => {
+    const r = gc.get(p.uid);
+    return `<div class="egg-row"><span class="art"><img src="${itemImg(imgKey(p))}" alt=""></span><span><b>${displayName(p)}</b> · ${r.met ? r.why : '조건 아직'}${r.met && r.nest ? ' + 둥지 +1' : ''}</span>` +
+      `<b class="${r.gain ? (r.to >= GROW_NEED ? 'okc' : 'okc') : 'noc'}">${r.gain ? `${r.from} → ${r.to}${r.to >= GROW_NEED ? ' 완료' : ''}` : `${r.from}/${GROW_NEED} 그대로`}</b></div>`;
+  }).join('');
+  return rows ? `<div class="egg-list">${rows}</div>` : '';
 }
 
 function detailHTML(item, now, after, { acts = '', hint = '', warn = false, extra = '' } = {}) {
+  if (isEgg(item)) return eggDetailHTML(item, acts) + (item.uid > 0 ? eggListHTML(item.uid) : '');
   const it = ITEMS[item.id];
   const g = item.g ?? 1;
   const m = s.mutations[item.id];
@@ -637,12 +737,10 @@ function renderPanel(ev, prevEv, coach) {
   const extra = G.extraCost(s), expand = G.expandCost(s);
   const next = EXPAND_STEPS[s.expand];
   const blocked = G.extraBlocked(s);
-  const noble = G.nobleDealOpen(s);
-  panel.innerHTML = `<div class="done-line"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>오늘 입고 완료 · 상품을 눌러 상세·합성을 볼 수 있어요</div>` +
+  panel.innerHTML = `<div class="done-line"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>오늘 입고 완료 · 상품을 눌러 상세·합성을 볼 수 있어요</div>` + eggListHTML(null) +
     `<div class="shopbar">
-      <button class="btn" data-act="extra" ${blocked || s.balance < extra ? 'disabled' : ''}>추가 입고<small>${blocked ? '검소한 영업 중' : s.tickets ? `이용권 1장 사용` : `잔금 ${extra}${s.regulars.includes('wanderers') ? ' · 떠돌이 할인' : ''}`}</small></button>
+      <button class="btn" data-act="extra" ${blocked || s.balance < extra ? 'disabled' : ''}>추가 입고<small>${blocked ? '검소한 영업 중' : s.tickets ? `이용권 1장 사용` : `잔금 ${extra}`}</small></button>
       <button class="btn" data-act="expand" ${expand === null || s.balance < expand ? 'disabled' : ''}>${expand === null ? '진열대 최대' : '자물쇠 칸 열기'}<small>${expand === null ? `${s.dim.cols}×${s.dim.rows}` : `잔금 ${expand} · ${next.cols}×${next.rows}`}</small></button>
-      ${noble ? `<button class="btn" data-act="noble" ${s.balance < G.NOBLE_COST ? 'disabled' : ''} style="grid-column:1/-1">귀족의 소개 · 중급 입고<small>잔금 ${G.NOBLE_COST} · 오늘만</small></button>` : ''}
     </div>` + (coach === 3 ? `<div style="margin-top:14px">${coachHTML(3, 'down')}</div>` : '');
 }
 
@@ -668,11 +766,8 @@ function renderActions(coach) {
   if (s.phase === 'pick') {
     $('btn-rotate').hidden = true;
     $('btn-skip').hidden = false;
-    reroll.hidden = false;
-    const cost = G.rerollCost(s), full = G.rerollFullCost(s);
-    reroll.innerHTML = `후보 새로고침<small>${cost === 0 ? (s.grace ? '마왕의 유예 · 무료' : '무료') : `잔금 ${full !== cost ? `<s>${full}</s> ` : ''}${cost}${full !== cost ? ' · 고블린 할인' : ''}`}</small>`;
-    reroll.disabled = s.balance < cost;
-    main.textContent = pickedOffer !== null ? `${ITEMS[s.offers[pickedOffer].id].name} 고르기` : '후보를 골라 주세요';
+    const po = pickedOffer !== null ? ITEMS[s.offers[pickedOffer].id] : null;
+    main.textContent = po ? `${po.egg ? po.egg.name : po.name} 고르기` : '후보를 골라 주세요';
     main.disabled = pickedOffer === null;
     return;
   }
@@ -763,8 +858,8 @@ function showRegular() {
   $('rg-status').innerHTML = statusHTML();
   const fav = s.favor[g] ?? 0;
   $('rg-offer').innerHTML = `<div class="h"><img src="${guestImg(g)}" alt=""><div><b>${c.name}이(가) 단골이 되고 싶어 해요</b>
-    <div class="hearts">${'♥'.repeat(Math.min(fav, 6))}</div><small>오늘 방문 +1 · 방문당 최대 +1</small></div></div>
-    <dl><dt>호감 조건</dt><dd>${G.REGULAR[g].cond}</dd><dt>단골 효과</dt><dd>${G.REGULAR[g].effect}</dd></dl>`;
+    ${heartsHTML(fav)}<small>오늘 방문 +1 · 방문당 최대 +1</small></div></div>
+    <dl><dt>호감 조건</dt><dd>${G.REGULAR[g].cond}</dd><dt>단골 효과</dt><dd>${regEffect(g)} · 주력 결산 보상</dd><dt>지금 단계</dt><dd>${stageLine(g)}</dd></dl>`;
   const full = s.regulars.length >= 2;
   $('rg-slots-title').textContent = `단골 자리 ${s.regulars.length} / 2`;
   $('rg-slots-lead').textContent = full ? '자리가 다 찼어요. 한 집단을 교체하거나 제안을 거절할 수 있어요.' : '빈자리가 있어요. 받아들이거나 거절할 수 있어요.';
@@ -772,7 +867,7 @@ function showRegular() {
   $('rg-slots').innerHTML = [0, 1].map((i) => {
     const r = s.regulars[i];
     if (!r) return '<div class="rg-slot empty">빈자리</div>';
-    return `<button class="rg-slot${swapOut === r ? ' sel' : ''}" data-swap="${r}">${swapOut === r ? '<span class="swap">교체</span>' : ''}<img src="${guestImg(r)}" alt=""><b>${CUSTOMERS[r].name}</b><small>${G.REGULAR[r].effect}</small></button>`;
+    return `<button class="rg-slot${swapOut === r ? ' sel' : ''}" data-swap="${r}">${swapOut === r ? '<span class="swap">교체</span>' : ''}<img src="${guestImg(r)}" alt=""><b>${CUSTOMERS[r].name}${s.main === r ? ' · 주력' : ''}</b><small>${stageLine(r)}</small></button>`;
   }).join('');
   const acc = $('btn-rg-accept');
   if (!full) { acc.textContent = '단골로 맞이하기'; acc.disabled = false; }
@@ -801,6 +896,43 @@ function showReward() {
   btn.disabled = !ready;
   btn.textContent = !pickedReward ? '보상을 골라 주세요' : pickedReward === 'priority' ? (pickedPrio ? `${ITEMS[pickedPrio].name}을(를) 우선 입고로` : '상품을 골라 주세요') : `${G.REWARDS[pickedReward].name} 받기`;
   show('reward');
+}
+
+/* ---------- 21 결산 · 주력 단골 ---------- */
+
+let pickedMainReward = null;
+let pickedMain = null;
+
+function showSettleMain() {
+  $('sm-day').textContent = `${s.last?.day ?? s.day}일 차`;
+  $('sm-status').innerHTML = statusHTML();
+  const opts = G.mainRewardOptions(s);
+  if (pickedMainReward && !opts.includes(pickedMainReward)) pickedMainReward = null;
+  if (!pickedMainReward && opts.length) pickedMainReward = opts[opts.length - 1];
+  if (!pickedMain || !s.regulars.includes(pickedMain)) pickedMain = s.main ?? s.regulars[0];
+  if (s.main) {
+    const g = s.main, cat = CATS[CUSTOMERS[g].fav].name;
+    const st = G.stageOf(s.favor[g] ?? 0);
+    const label = {
+      ticket: [`${cat} 후보 무료 다시 뽑기 이용권 1장`, `입고 1번 자리만 · 보관 ${s.freeTickets} / ${G.MAX_TICKETS}`],
+      g1: [`${cat} Ⅰ등급 상품 1개 선택`, CUSTOMERS[g].fav === 'beast' ? '마수는 성장 전 상태로, 정령 둥지는 일반 상품으로 받아요' : '내일 첫 입고에서 이 분야 후보 셋 중 하나'],
+      g2: [`${cat} Ⅱ등급 상품 1개 선택`, '내일 첫 입고에서 이 분야 Ⅱ등급 후보 셋 중 하나'],
+    };
+    const nx = G.nextStage(s.favor[g] ?? 0);
+    const locked = !opts.includes('g2') ? (opts.includes('g1') ? ['VIP 단골이 되면', `${cat} Ⅱ등급 상품 선택이 추가돼요 · 호감 ${6 - (s.favor[g] ?? 0)} 더`] : ['친한 단골이 되면', `${cat} Ⅰ등급 상품 선택이 추가돼요 · 호감 ${4 - (s.favor[g] ?? 0)} 더`]) : null;
+    $('sm-reward').innerHTML = `<div class="smr"><div class="h"><img src="${guestImg(g)}" alt=""><div><b>주력 단골 보상 · ${CUSTOMERS[g].name}</b><small>${st?.name ?? ''} · 하나만 고를 수 있어요</small></div></div>
+      ${opts.map((k) => `<button class="smr-opt${pickedMainReward === k ? ' sel' : ''}" data-mr="${k}"><i></i><span><b>${label[k][0]}</b><small>${label[k][1]}</small></span></button>`).join('')}
+      ${locked && nx ? `<div class="smr-lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span><b>${locked[0]}</b><small>${locked[1]}</small></span></div>` : ''}</div>`;
+    if (s.freeTickets >= G.MAX_TICKETS && pickedMainReward === 'ticket') $('sm-reward').insertAdjacentHTML('beforeend', '<p class="fine">이용권은 2장까지 보관돼요. 이미 가득해서 받아도 늘지 않아요.</p>');
+  } else {
+    $('sm-reward').innerHTML = '<p class="fine">주력 단골이 없어 이번 결산 보상은 없어요. 아래에서 내일부터의 주력을 고를 수 있어요.</p>';
+  }
+  $('sm-mains').innerHTML = s.regulars.map((g) => {
+    const keep = g === s.main;
+    return `<button class="sm-main${pickedMain === g ? ' sel' : ''}" data-main="${g}"><img src="${guestImg(g)}" alt=""><span><b>${CUSTOMERS[g].name}${keep ? " · 유지" : "로 변경"}</b><small>${keep ? '' : `${(s.last?.day ?? s.day) + 1}일 차부터 `}입고 1번 자리 ${CATS[CUSTOMERS[g].fav].name} 상품</small></span></button>`;
+  }).join('');
+  $('btn-settlemain').textContent = `보상 받고 ${(s.last?.day ?? s.day) + 1}일 차로`;
+  show('settlemain');
 }
 
 /* ---------- 14 마왕의 계약 ---------- */
@@ -928,6 +1060,12 @@ function showJudge(fromSave = false) {
     else if (r.result === 'fail') notes.push(`<div class="j-note bad">◎ ${t.name} 실패 · 계약금만 잃었어요</div>`);
     else notes.push(`<div class="j-note">◎ ${t.name} 진행 ${r.progress} / ${t.need}</div>`);
   }
+  for (const gr of st.growth ?? []) {
+    const name = ITEMS[gr.id].egg.name;
+    if (gr.hatched && gr.gain) notes.push(`<div class="j-note good"><img src="${itemImg(gr.id)}" alt="">${name} → ${ITEMS[gr.id].name} 성장 완료! 새 매출은 내일부터</div>`);
+    else if (gr.gain) notes.push(`<div class="j-note"><img src="${itemImg(`${gr.id}_egg`)}" alt="">${name} 성장 ${gr.from} → ${gr.to}${gr.nest ? ' (둥지 +1)' : ''}</div>`);
+  }
+  if (st.stageUp) notes.push(`<div class="j-note good"><img src="${guestImg(st.stageUp.guest)}" alt="">${CUSTOMERS[st.stageUp.guest].name} · ${st.stageUp.stage}가 되었어요</div>`);
   if (st.forfeited) notes.push('<div class="j-note bad">불꽃 되찾기 계약으로 이번 결산 보상을 포기했어요</div>');
   let extra = notes.length ? `<div class="j-notes">${notes.join('')}</div>` : '';
   const next = $('btn-judge-next');
@@ -936,19 +1074,23 @@ function showJudge(fromSave = false) {
     extra += st.ok
       ? `<div class="gain-card"><span>잔금 +${fmt(st.gain)}</span><b>${fmt(s.balance)}</b></div>`
       : `<div class="grace"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg><div><b>마왕의 유예를 받았어요</b>${s.day}일 차에 상품 후보 전체를 한 번 무료로 다시 뽑을 수 있어요. 그날이 끝나면 사라져요.</div></div>`;
-    next.textContent = s.phase === 'reward' ? '결산 보상 고르기' : s.regularOffer ? '단골 제안 보기' : `${s.day}일 차 아침으로`;
+    next.textContent = s.phase === 'reward' ? '결산 보상 고르기' : s.phase === 'mainpick' ? '주력 단골 보상' : s.regularOffer ? '단골 제안 보기' : `${s.day}일 차 아침으로`;
   }
   $('j-extra').innerHTML = extra;
   show('judge');
   if (!fromSave) {
     const n = Math.min(Object.keys(st.perItem).length, 12);
     for (let i = 0; i < n; i++) S.play('coin_tick', { delay: 0.3 + i * 0.07, rate: 1 + Math.min(i, 10) * 0.03 });
+    S.play('coin_stack', { delay: 0.35 + n * 0.07 });
     let t = 0.4 + n * 0.07;
     if (st.ok) S.play('pay_success', { delay: t });
     else { S.play('pay_fail', { delay: t }); S.play('flame_out', { delay: t + 0.6 }); }
     t += 1.2;
     for (const r of st.condResults ?? []) { S.play(r.result === 'success' ? 'condition_success' : r.result === 'fail' ? 'condition_fail' : 'condition_check', { delay: t }); t += 0.5; }
-    if (st.favorGain) S.play('favor_up', { delay: t });
+    if (st.favorGain) { S.play('favor_up', { delay: t }); t += 0.5; }
+    if (st.stageUp) { S.play(st.stageUp.stage === 'VIP 단골' ? 'vip_up' : 'stage_up', { delay: t }); t += 0.6; }
+    const HATCH = { slime: 'hatch_slime', wyvern: 'hatch_wyvern', snail: 'hatch_snail', mimic: 'hatch_mimic', griffin: 'hatch_griffin' };
+    for (const gr of (st.growth ?? []).filter((x) => x.gain)) { S.play(gr.hatched ? HATCH[gr.id] : gr.nest ? 'nest_bonus' : 'growth_tick', { delay: t }); t += 0.4; }
     if (s.phase === 'over') S.play('seized', { delay: t + 0.4 });
     countUp($('receipt').querySelector('[data-count]'), st.sales);
   }
@@ -972,7 +1114,7 @@ function finishJudge() {
   if (s.phase === 'over') return showResult();
   resetSelection();
   pickedReward = null; pickedPrio = null; swapOut = null;
-  if (s.phase === 'reward') S.play('reward_pick');
+  if (s.phase === 'reward' || s.phase === 'mainpick') S.play('reward_pick');
   else if (s.regularOffer) S.play('regular_offer');
   route();
 }
@@ -1140,7 +1282,7 @@ function discardSelected() {
   select(null);
   save();
   render();
-  toast(`${ITEMS[p.id].name}을(를) 버렸어요. 되돌리기로 살릴 수 있어요.`);
+  toast(`${displayName(p)}을(를) 버렸어요. 되돌리기로 살릴 수 있어요.`);
 }
 
 function act(fn, sound) {
@@ -1195,7 +1337,8 @@ function bind() {
     if (a === 'discard') discardSelected();
     if (a === 'merge-preview') startMerge();
     if (a === 'extra') act(G.buyExtra, 'restock_new');
-    if (a === 'noble') act(G.buyNoble, 'restock_new');
+    if (a === 'reroll-all') { pickedOffer = null; act(G.reroll, 'reroll'); }
+    if (a === 'reroll-one') { pickedOffer = null; act(G.rerollSlot1, 'free_ticket'); }
     if (a === 'expand' && act(G.buyExpand, 'reward_pick')) toast(`진열대가 ${s.dim.cols}×${s.dim.rows}로 넓어졌어요`);
   };
   $('panel').addEventListener('click', onAct);
@@ -1251,8 +1394,10 @@ function bind() {
   });
   $('btn-rg-accept').onclick = () => {
     const swapped = s.regulars.length >= 2;
+    const hadMain = !!s.main;
     if (!G.acceptRegular(s, swapOut)) return;
     S.play(swapped ? 'regular_swap' : 'regular_join');
+    if (!hadMain && s.main) { S.play('main_regular_set', { delay: 0.6 }); toast(`${CUSTOMERS[s.main].name}이(가) 주력 단골이 되었어요 · 입고 1번 자리 ${CATS[CUSTOMERS[s.main].fav].name}`); }
     swapOut = null;
     save();
     route();
@@ -1278,6 +1423,32 @@ function bind() {
   };
 
   $('btn-go-shelf').onclick = leaveMorning;
+  $('sp-grid').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-start]');
+    if (!b) return;
+    pickedStart = b.dataset.start;
+    S.play('ui_tap');
+    renderStartPick();
+  });
+  $('btn-startpick').onclick = () => { if (!pickedStart) return; S.play('start_category'); startNew(pickedStart); };
+  $('sm-reward').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mr]');
+    if (b) { pickedMainReward = b.dataset.mr; S.play('ui_tap'); showSettleMain(); }
+  });
+  $('sm-mains').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-main]');
+    if (b) { pickedMain = b.dataset.main; S.play('ui_tap'); showSettleMain(); }
+  });
+  $('btn-settlemain').onclick = () => {
+    const change = pickedMain && pickedMain !== s.main;
+    const reward = s.main ? pickedMainReward : null;
+    if (!G.settleMain(s, reward, pickedMain)) return;
+    S.play(change ? 'main_regular_set' : reward === 'ticket' ? 'free_ticket' : 'reward_pick');
+    pickedMainReward = null; pickedMain = null;
+    resetSelection();
+    save();
+    route();
+  };
   $('btn-judge-skip').onclick = () => { if (judgeAnim) { judgeAnim = null; } else finishJudge(); };
   $('btn-judge-next').onclick = finishJudge;
 
@@ -1306,11 +1477,11 @@ function bind() {
     const run = loadRun();
     if (run && run.phase !== 'over' && !confirm('진행 중인 상점이 있어요. 새 계약서에 서명할까요?')) return;
     S.play('contract_sign');
-    startNew();
+    showStartPick();
   };
   $('btn-continue').onclick = resume;
   $('btn-home').onclick = () => { $('menu').close(); if (tut) quitTutorial(); else goStart(); };
-  $('btn-again').onclick = () => { S.play('contract_sign'); startNew(); };
+  $('btn-again').onclick = () => { S.play('contract_sign'); showStartPick(); };
   $('btn-result-home').onclick = goStart;
   $('btn-card').onclick = saveCard;
 
@@ -1334,7 +1505,7 @@ function bind() {
   document.addEventListener('click', (e) => {
     const b = e.target.closest('button, a.btn');
     if (!b || b.disabled) return;
-    if (b.matches('.cell, .orow, #btn-rotate, #btn-undo, #btn-main, #btn-sound, #btn-sign, #btn-refuse, #btn-new, #btn-again, #btn-reroll, #btn-mutation, #btn-reward, #btn-rg-accept, #btn-rg-refuse, [data-act], [data-go], [data-mut], [data-prio]')) return;
+    if (b.matches('.cell, .orow, #btn-rotate, #btn-undo, #btn-main, #btn-sound, #btn-sign, #btn-refuse, #btn-new, #btn-again, #btn-reroll, #btn-mutation, #btn-reward, #btn-rg-accept, #btn-rg-refuse, #btn-startpick, #btn-settlemain, [data-act], [data-go], [data-mut], [data-prio], [data-start], [data-mr], [data-main]')) return;
     S.play('ui_tap');
   }, true);
 
@@ -1455,7 +1626,7 @@ const LESSONS = [
   },
   {
     title: '손님과 단골',
-    body: '오늘 손님은 <b>마녀 모임</b>. 손님이 온 날 그 손님의 <b>호감 조건</b>(연금술 조합 활성화)을 채운 채 영업하면 호감도가 올라요. ♥♥가 되면 단골 제안이 와요 → [단골로 맞이하기].',
+    body: '오늘 손님은 <b>마녀 모임</b>. 손님이 온 날 그 손님의 <b>호감 조건</b>(연금술 조합 활성화)을 채운 채 영업하면 호감도가 올라요. ♥♥가 되면 단골 제안이 와요 → [단골로 맞이하기]. 첫 단골은 <b>주력 단골</b>이 되어 입고 1번 자리를 자기 분야 상품으로 채워 줘요.',
     goal: '마녀 모임을 단골로 맞이하기',
     setup: () => {
       const s = lessonState(105, 4, (x) => guestsFor(x, ['school', 'noble', 'goblins', 'witches', 'adventurers']));
@@ -1491,6 +1662,19 @@ const LESSONS = [
       return s;
     },
     done: (s) => s.day >= 6 && s.phase !== 'reward',
+  },
+  {
+    title: '마수 성장',
+    body: '마수는 <b>알</b>로 들어와 매출이 낮아요. 영업이 끝날 때 성장 조건을 채우면 성장도 +1, <b>2</b>가 되면 성장 완료(새 매출은 다음 날부터). <b>정령 둥지</b>와 붙어 있으면 +1 더. 와이번 알을 눌러 조건을 확인하고 영업해 보세요.',
+    goal: '마수 하나를 성장 완료시키기',
+    setup: () => {
+      const s = lessonState(109, 4, (x) => guestsFor(x, ['school', 'keeper', 'goblins', 'keeper', 'noble']));
+      tp(s, [['wyvern', 0, 0], ['lavabread', 2, 0], ['nest', 0, 1], ['slime', 4, 2], ['ghostcheese', 4, 0]]);
+      s.pieces[0].grow = 0; s.pieces[3].grow = 0;
+      arrangeIt(s);
+      return s;
+    },
+    done: (s) => s.pieces.some((p) => ITEMS[p.id].egg && !isEgg(p)),
   },
   {
     title: '잔금 쓰기',

@@ -12,6 +12,10 @@ const SFX = {
   mutation_choose_a: 1, mutation_choose_b: 1, mutation_open: 1, priority_set: 1,
   regular_join: 1, regular_offer: 1, regular_swap: 1, restock_new: 1,
   sign_condition: 1, sign_instant: 1, sign_period: 1,
+  // 신규 분야·단골 연동: 식품 세트, 보물, 마수 성장·부화, 주력 단골, 단계 상승, 무료 이용권, 시작 분야
+  coin_stack: 1, food_set: 1, treasure_shine: 1, growth_tick: 1, nest_bonus: 1,
+  hatch_slime: 1, hatch_wyvern: 1, hatch_snail: 1, hatch_mimic: 1, hatch_griffin: 1,
+  main_regular_set: 1, stage_up: 1, vip_up: 1, free_ticket: 1, start_category: 1,
 };
 const VOLUME = { sfx: 0.8, bgm: 0.32 };
 

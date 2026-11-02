@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ITEMS, ITEM_IDS, canPlace, cellsOf, evaluate, gradeBase, shapeOf, START_SIZE } from '../js/rules.js';
+import { ITEMS, ITEM_IDS, CAT_IDS, canPlace, cellsOf, evaluate, gradeBase, shapeOf, START_SIZE, growthCheck, isEgg, mergeSet } from '../js/rules.js';
 import * as G from '../js/game.js';
 
 const dim = { cols: 5, rows: 4 };
@@ -10,9 +10,11 @@ const ev = (pieces, extra = {}) => evaluate(pieces, { dim, ...extra });
 const tot = (pieces, p, extra) => ev(pieces, extra).items.get(p.uid).total;
 const arrange = (seed) => { const s = G.newGame(seed); s.phase = 'arrange'; s.offers = null; s.contractOffer = null; return s; };
 
-test('상품 24종, 분야별 8종', () => {
-  assert.equal(ITEM_IDS.length, 24);
+test('상품 42종: 기존 3분야 8종씩 + 신규 3분야 6종씩', () => {
+  assert.equal(ITEM_IDS.length, 42);
+  assert.equal(CAT_IDS.length, 6);
   for (const c of ['alch', 'gear', 'magic']) assert.equal(ITEM_IDS.filter((id) => ITEMS[id].cat === c).length, 8);
+  for (const c of ['food', 'treasure', 'beast']) assert.equal(ITEM_IDS.filter((id) => ITEMS[id].cat === c).length, 6);
   for (const id of ITEM_IDS) assert.ok(ITEMS[id].muts.A && ITEMS[id].muts.B, id);
 });
 
@@ -96,16 +98,20 @@ test('합성 후 처음 Ⅱ등급이면 변이를 고르고, 고르기 전엔 �
   assert.equal(s.mutations.potion, undefined);
 });
 
-test('입고 후보는 서로 다르고 이유가 붙는다', () => {
-  const s = arrange(31);
+test('입고 후보: 1번 시작 분야(단골 전) · 2번 보유 상품 · 3번 새 상품, 중복 없음', () => {
+  const s = G.newGame(31, 'food');
   s.pieces = [P('herb', 0, 0)];
-  s.phase = 'pick';
   for (let i = 0; i < 30; i++) {
     const o = G.drawOffers(s);
     assert.equal(new Set(o.map((x) => x.id)).size, 3);
-    assert.ok(o.every((x) => ['same', 'guest', 'new'].includes(x.why)));
-    assert.equal(o[0].why, 'same');
+    assert.equal(o[0].why, 'start');
+    assert.equal(ITEMS[o[0].id].cat, 'food');
+    assert.equal(o[1].why, 'same');
   }
+  s.main = 'dwarf';
+  const o = G.drawOffers(s);
+  assert.equal(o[0].why, 'main');
+  assert.equal(ITEMS[o[0].id].cat, 'treasure');
 });
 
 test('우선 입고는 더 자주 나오지만 보장되지 않는다', () => {
@@ -131,20 +137,101 @@ test('납부 미달이면 불꽃 하나, 잔금은 늘지 않고 유예를 받�
   assert.equal(G.rerollCost(s), 0);
 });
 
-test('특별 손님 조건을 채우면 호감도, 쌓이면 단골 제안·교체·거절', () => {
+test('분야형 손님 조건 → 호감도, 단골 제안·첫 단골은 주력·교체하면 호감 0', () => {
   const s = arrange(5);
-  s.customers = ['goblins', 'goblins', 'goblins', 'witches'];
-  s.pieces = [P('herb', 0, 0), P('herb', 1, 0), P('herb', 2, 0), P('armor', 0, 1), P('shield', 2, 1)];
+  s.customers = ['goblins', 'witches', 'goblins', 'witches'];
+  s.pieces = [P('herb', 0, 0), P('potion', 1, 0), P('armor', 0, 1)];
   G.openShop(s);
-  assert.equal(s.favor.goblins, 1);
+  assert.equal(s.favor.goblins, undefined); // 특별 손님은 단골이 되지 않는다
   s.phase = 'arrange'; s.contractOffer = null;
   G.openShop(s);
-  assert.equal(s.regularOffer, 'goblins');
+  assert.equal(s.favor.witches, 1);
+  s.phase = 'arrange'; s.contractOffer = null; s.day = 4;
+  G.openShop(s);
+  assert.equal(s.regularOffer, 'witches');
+  assert.ok(G.acceptRegular(s));
+  assert.equal(s.main, 'witches');
+  s.regularOffer = 'ogre';
   s.regulars = ['witches', 'school'];
+  s.favor.school = 3;
   assert.equal(G.acceptRegular(s), false);
   assert.ok(G.acceptRegular(s, 'school'));
-  assert.deepEqual(s.regulars, ['witches', 'goblins']);
-  assert.equal(G.rerollCost({ ...s, grace: false, rerolls: 0 }), 2);
+  assert.deepEqual(s.regulars, ['witches', 'ogre']);
+  assert.equal(s.favor.school, 0);
+  assert.equal(s.main, 'witches');
+});
+
+test('마수: 알은 낮은 매출·합성 불가, 조건을 채우면 성장도 +1(둥지 +1, 중첩 없음), 새 매출은 다음 영업부터', () => {
+  const egg = { ...P('wyvern', 0, 0), grow: 0 };
+  const bread = P('lavabread', 2, 0);
+  const nest1 = P('nest', 0, 1), nest2 = P('nest', 2, 2);
+  assert.ok(isEgg(egg));
+  assert.equal(tot([egg], egg), 2);
+  const gc = growthCheck([egg, bread, nest1, nest2], dim);
+  assert.deepEqual([gc.get(egg.uid).met, gc.get(egg.uid).gain, gc.get(egg.uid).to], [true, 2, 2]);
+  assert.equal(growthCheck([egg], dim).get(egg.uid).gain, 0);
+  const s = arrange(6);
+  s.customers = ['goblins'];
+  s.pieces = [egg, bread];
+  const r = G.openShop(s);
+  assert.equal(r.perItem[egg.uid], 2);
+  assert.equal(s.pieces[0].grow, 1);
+  const eggs = [0, 1, 2].map((i) => ({ ...P('slime', i, 3), grow: 0 }));
+  assert.equal(mergeSet(eggs, eggs[0]), null);
+  const grown = eggs.map((e) => ({ ...e, grow: 2 }));
+  assert.ok(mergeSet(grown, grown[0]));
+  assert.equal(tot(grown, grown[0]), 7);
+});
+
+test('신규 분야 효과: 식품 세트·보물(루비 단독, 왕관 최고 등급, 감정 저울 방향)', () => {
+  const tea = P('startea', 1, 0);
+  assert.equal(tot([tea, P('lavabread', 2, 0), P('orb', 0, 0)], tea), 4 + 6);
+  const honey = P('moonhoney', 1, 1);
+  assert.equal(tot([honey, P('ghostcheese', 0, 1), P('lavabread', 2, 1)], honey), 2 + 5);
+  const ruby = P('ruby', 0, 0);
+  assert.equal(tot([ruby], ruby), 11);
+  assert.equal(tot([ruby, P('coin', 1, 0)], ruby), 6);
+  const crown = P('crown', 0, 0, 0, 2);
+  assert.equal(tot([crown, P('sword', 3, 0, 0, 2)], crown), gradeBase('crown', 2) + 12);
+  // 저울은 회전 0에서 오른쪽을 가리킨다
+  const scale = P('scale', 0, 0), coin = P('coin', 1, 1), coin2 = P('coin', 3, 3);
+  assert.equal(tot([scale, coin, coin2], coin), 3 + 5);
+});
+
+test('주력 단골 결산: 친밀도별 보상, 이용권은 1번 자리만, 주력 변경은 다음 날 후보부터', () => {
+  const s = arrange(8);
+  s.day = 5;
+  s.regulars = ['keeper', 'ogre'];
+  s.main = 'keeper'; s.everMain = true;
+  s.favor = { keeper: 4, ogre: 2 };
+  s.pieces = [P('armor', 0, 0), P('shield', 2, 0), P('bow', 4, 0), P('sword', 2, 2)];
+  s.forfeitReward = true; // 성장 보상은 건너뛰고 바로 주력 단계로
+  s.customers = ['goblins', 'noble', 'goblins', 'noble', 'adventurers'];
+  const r = G.openShop(s);
+  assert.ok(r.ok);
+  assert.equal(s.phase, 'mainpick');
+  assert.deepEqual(G.mainRewardOptions(s), ['ticket', 'g1']);
+  assert.ok(G.settleMain(s, 'ticket', 'ogre'));
+  assert.equal(s.freeTickets, 1);
+  assert.equal(s.main, 'ogre');
+  assert.equal(s.day, 6);
+  assert.equal(ITEMS[s.offers[0].id].cat, 'food');
+  const keep = s.offers.slice(1).map((o) => o.id);
+  assert.ok(G.rerollSlot1(s));
+  assert.equal(s.freeTickets, 0);
+  assert.deepEqual(s.offers.slice(1).map((o) => o.id), keep);
+  assert.equal(G.rerollSlot1(s), false);
+});
+
+test('시작 분야 손님은 2일 차에 오고, 단골 전에는 간격 상한이 있다', () => {
+  for (const cat of CAT_IDS) {
+    const s = G.newGame(91, cat);
+    const g = { alch: 'witches', gear: 'adventurers', magic: 'school', food: 'ogre', treasure: 'dwarf', beast: 'keeper' }[cat];
+    assert.equal(G.customerOn(s, 2), g);
+    const days = [];
+    for (let d = 1; d <= 20; d++) if (G.customerOn(s, d) === g) days.push(d);
+    for (let i = 1; i < days.length; i++) assert.ok(days[i] - days[i - 1] <= 5, `${cat} ${days}`);
+  }
 });
 
 test('계약: 제안은 유형별 하나씩, 서명하거나 거절해야 영업', () => {

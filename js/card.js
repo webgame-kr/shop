@@ -1,6 +1,6 @@
 // 인스타 공유 카드(1080×1920, 디자인 시안 09): 기울어진 압류 통지서, 버틴 날, 상점 별명, 최종 진열대(일러스트),
 // 누적 매출·하루 최고·계약 수, 게임 주소.
-import { ITEMS, cellsOf, sizeOf, roman } from './rules.js';
+import { ITEMS, cellsOf, sizeOf, roman, imgKey } from './rules.js';
 
 const DH = '"Do Hyeon", "Noto Sans KR", sans-serif';
 const BT = '"Gowun Batang", serif';
@@ -28,7 +28,7 @@ function loadImages(ids) {
 
 export async function drawCard({ dim, pieces, days, total, bestDay, signed, nickname, url }) {
   try { await Promise.all([document.fonts.load(`80px ${DH}`), document.fonts.load(`40px ${BT}`)]); } catch { /* 기본 글꼴로 */ }
-  const pics = await loadImages(pieces.map((p) => p.id));
+  const pics = await loadImages(pieces.map(imgKey));
   const W = 1080, H = 1920;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -110,7 +110,7 @@ export async function drawCard({ dim, pieces, days, total, bestDay, signed, nick
     }
     // 꺾인 상품은 전체 바운딩 박스에 그림을 그린다(시안의 장화처럼)
     if (cells.length !== w * h) box = { x: p.x, y: p.y, w, h };
-    const pic = pics.get(p.id);
+    const pic = pics.get(imgKey(p));
     const cx = bx + (box.x + box.w / 2) * cell, cy = by + (box.y + box.h / 2) * cell;
     if (pic) {
       const base = sizeOf(p.id, 0);

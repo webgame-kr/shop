@@ -64,8 +64,9 @@ function greedy(s) {
   if (s.phase === 'arrange' && s.balance >= G.extraCost(s) + 25) { G.buyExtra(s); return; }
 }
 
+const CATS6 = ['alch', 'gear', 'magic', 'food', 'treasure', 'beast'];
 function play(seed, bot) {
-  const s = G.newGame(seed);
+  const s = G.newGame(seed, CATS6[seed % 6]);
   let r = seed ^ 0x5bd1e995;
   const rand = () => ((r = (Math.imul(r, 1664525) + 1013904223) | 0) >>> 0) / 4294967296;
   let guard = 0;
@@ -73,6 +74,7 @@ function play(seed, bot) {
     if (s.contractOffer) G.refuseContracts(s);
     if (s.pendingMutation) G.chooseMutation(s, 'A');
     if (s.regularOffer) { if (s.regulars.length < 2) G.acceptRegular(s); else G.refuseRegular(s); }
+    if (s.phase === 'mainpick') { G.settleMain(s, G.mainRewardOptions(s).slice(-1)[0] ?? null, null); continue; }
     if (s.phase === 'arrange' && (bot === casual || s.balance < G.extraCost(s) + 25)) { G.openShop(s); continue; }
     if (s.phase === 'reward' && bot === casual) { const k = s.rewardOffer.find((r) => r !== 'priority') ?? 'priority'; G.takeReward(s, k, s.pieces[0]?.id); continue; }
     if (s.phase === 'place') { G.skip(s); continue; }

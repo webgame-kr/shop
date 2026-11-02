@@ -9,6 +9,7 @@ export const GRADE_MULT = 2.4;
 export const MAX_LIVES = 3;
 
 const ONE = [[0, 0]];
+const H2 = [[0, 0], [1, 0]];
 const V2 = [[0, 0], [0, 1]];
 const V3 = [[0, 0], [0, 1], [0, 2]];
 const H3 = [[0, 0], [1, 0], [2, 0]];
@@ -17,10 +18,14 @@ const L3 = [[0, 0], [0, 1], [1, 1]];
 
 // 분야 색은 디자인 시안(2026.11.02)
 export const CATS = {
-  alch: { name: '연금술', color: '#2F7558' },
-  gear: { name: '모험 장비', color: '#3F5F8C' },
-  magic: { name: '마법 잡화', color: '#7448A3' },
+  alch: { name: '연금술', color: '#2F7558', short: '재료와 물약 연결' },
+  gear: { name: '모험 장비', color: '#3F5F8C', short: '방향과 진열 구조' },
+  magic: { name: '마법 잡화', color: '#7448A3', short: '다양한 조건 조합' },
+  food: { name: '마계 식품', color: '#B4532F', short: '음식 세트 구성' },
+  treasure: { name: '보물·귀금속', color: '#8C6A1D', short: '고등급 상품 집중' },
+  beast: { name: '마수·알', color: '#8A3D6C', short: '성장 투자' },
 };
+export const CAT_IDS = Object.keys(CATS);
 
 // effect·변이 문구의 {n}은 등급에 따라 바뀌는 수치(n × 등급).
 // 변이 A는 시안의 금색 문양, B는 민트 문양.
@@ -75,10 +80,69 @@ export const ITEMS = {
     muts: { A: ['대박', '자신 +{3}'], B: ['나눔', '붙어 있는 상품마다 +{1}'] } },
   chest: { name: '봉인 상자', cat: 'magic', cells: ONE, base: 3, effect: '네 방향이 모두 상품으로 둘러싸이면 자신 +{6}',
     muts: { A: ['보물', '둘러싸이면 자신 +{6} 더'], B: ['방출', '둘러싸이면 붙어 있는 상품마다 +{2}'] } },
+
+  // 마계 식품: 여러 음식으로 세트 구성. 변이 A는 고급 요리(자기 매출·미식회), B는 식탁 구성(주변 지원).
+  lavabread: { name: '용암빵', cat: 'food', cells: H2, base: 5, effect: '별빛 차나 만드라고라 수프와 붙으면 자신 +{4}',
+    muts: { A: ['화산 특제', '자신 +{2}, 오우거 미식회가 오는 날 +{3} 더'], B: ['나눔 빵', '붙어 있는 다른 식품마다 +{2}'] } },
+  ghostcheese: { name: '유령 치즈', cat: 'food', cells: ONE, base: 3, effect: '용암빵과 붙으면 자신 +{3}',
+    muts: { A: ['숙성 치즈', '자신 +{2}, 오우거 미식회가 오는 날 +{3} 더'], B: ['치즈 플래터', '붙어 있는 다른 식품마다 +{1}'] } },
+  moonhoney: { name: '달빛 꿀', cat: 'food', cells: ONE, base: 2, effect: '서로 다른 다른 식품 2종 이상과 붙으면 자신 +{5}',
+    muts: { A: ['왕실 꿀', '자신 +{2}, 오우거 미식회가 오는 날 +{3} 더'], B: ['꿀 바름', '붙어 있는 다른 식품마다 +{1}'] } },
+  dragonegg: { name: '용의 알', cat: 'food', cells: SQ, base: 13, effect: '다른 식품과 붙으면 자신 +{4}',
+    muts: { A: ['용알 정식', '자신 +{2}, 오우거 미식회가 오는 날 +{3} 더'], B: ['대가족 식탁', '붙어 있는 다른 식품마다 +{2}'] } },
+  startea: { name: '별빛 차', cat: 'food', cells: V2, base: 4, effect: '식품과 마법 잡화에 모두 붙으면 자신 +{6}',
+    muts: { A: ['별빛 다과회', '자신 +{2}, 오우거 미식회가 오는 날 +{3} 더'], B: ['찻잔 세트', '붙어 있는 마법 잡화마다 +{1}'] } },
+  mandrake: { name: '만드라고라 수프', cat: 'food', cells: L3, base: 6, effect: '식품과 연금술 상품에 모두 붙으면 자신 +{6}',
+    muts: { A: ['비전 수프', '자신 +{2}, 오우거 미식회가 오는 날 +{3} 더'], B: ['약선 요리', '붙어 있는 연금술 상품마다 +{1}'] } },
+
+  // 보물·귀금속: 적은 수의 고등급과 정교한 진열. 변이 A는 명품(자기 매출), B는 전시(배치·지원).
+  ruby: { name: '피의 루비', cat: 'treasure', cells: ONE, base: 6, effect: '다른 보물과 붙어 있지 않으면 자신 +{5}',
+    muts: { A: ['명품 루비', '자신 +{4}'], B: ['전시 루비', '붙어 있는 보물이 아닌 상품마다 +{2}'] } },
+  coin: { name: '고대 금화', cat: 'treasure', cells: ONE, base: 3, effect: '붙어 있는 다른 고대 금화마다 자신 +{2} (최대 3개)',
+    muts: { A: ['황금 주화', '자신 +{3}'], B: ['금화 탑', '붙어 있는 고대 금화마다 자신 +{1} 더 (최대 3개)'] } },
+  crown: { name: '잊힌 왕관', cat: 'treasure', cells: L3, base: 9, effect: '상점에서 가장 높은 등급(동률 포함)이면 자신 +{6}',
+    muts: { A: ['왕의 귀환', '자신 +{4}'], B: ['대관식', '붙어 있는 상품마다 +{2}'] } },
+  grail: { name: '황금 성배', cat: 'treasure', cells: V2, base: 6, effect: '마법 잡화와 붙으면 자신 +{4}',
+    muts: { A: ['성배의 축복', '자신 +{3}'], B: ['성수', '붙어 있는 마법 잡화마다 +{2}'] } },
+  jewelbox: { name: '보석함', cat: 'treasure', cells: H2, base: 3, effect: '붙어 있는 피의 루비·고대 금화·잊힌 왕관마다 +{3}',
+    muts: { A: ['진열장', '자신 +{3}'], B: ['보석 정리', '붙어 있는 다른 보물마다 +{2}'] } },
+  scale: { name: '감정 저울', cat: 'treasure', cells: V2, base: 2, effect: '화살표 방향에 바로 맞닿은 보물 하나에 +{5}',
+    muts: { A: ['정밀 감정', '화살표 방향의 보물에 +{4} 더'], B: ['감정서', '붙어 있는 보물마다 +{1}'] } },
+
+  // 마수·알: 알(성장 전)은 낮은 매출, 영업이 끝날 때 조건을 채우면 성장도 +1, 2에서 성장 완료.
+  slime: { name: '슬라임', cat: 'beast', cells: ONE, base: 7, effect: '성장 완료 후 기본 매출이 크게 올라요',
+    egg: { name: '슬라임 알', base: 1, grow: '붙어 있는 빈칸이 있으면 성장' },
+    muts: { A: ['희귀종', '자신 +{3}'], B: ['공생종', '붙어 있는 상품마다 +{1}'] } },
+  wyvern: { name: '아기 와이번', cat: 'beast', cells: H2, base: 12, effect: '성장 완료 후 기본 매출이 크게 올라요',
+    egg: { name: '와이번 알', base: 2, grow: '식품과 붙으면 성장' },
+    muts: { A: ['희귀종', '자신 +{3}'], B: ['공생종', '붙어 있는 상품마다 +{1}'] } },
+  snail: { name: '달팽이 정령', cat: 'beast', cells: V2, base: 11, effect: '성장 완료 후 기본 매출이 크게 올라요',
+    egg: { name: '정령 고치', base: 2, grow: '약초나 달빛 버섯과 붙으면 성장' },
+    muts: { A: ['희귀종', '자신 +{3}'], B: ['공생종', '붙어 있는 상품마다 +{1}'] } },
+  mimic: { name: '미믹', cat: 'beast', cells: H2, base: 13, effect: '성장 완료 후 기본 매출이 크게 올라요',
+    egg: { name: '잠든 미믹', base: 2, grow: '보물과 붙으면 성장' },
+    muts: { A: ['희귀종', '자신 +{3}'], B: ['공생종', '붙어 있는 상품마다 +{1}'] } },
+  griffin: { name: '꼬마 그리핀', cat: 'beast', cells: L3, base: 16, effect: '성장 완료 후 기본 매출이 크게 올라요',
+    egg: { name: '그리핀 알', base: 2, grow: '모험 장비와 붙으면 성장' },
+    muts: { A: ['희귀종', '자신 +{3}'], B: ['공생종', '붙어 있는 상품마다 +{1}'] } },
+  nest: { name: '정령 둥지', cat: 'beast', cells: SQ, base: 4, effect: '붙어 있는 성장 전 마수가 조건을 채우면 성장도 +1 더 (중첩 없음)',
+    muts: { A: ['큰 둥지', '자신 +{2}'], B: ['따뜻한 둥지', '붙어 있는 성장 완료 마수마다 +{2}'] } },
 };
 export const ITEM_IDS = Object.keys(ITEMS);
 // 화살표가 있어 회전하면 그림도 같이 도는 상품
-export const DIRECTIONAL = new Set(['spear']);
+export const DIRECTIONAL = new Set(['spear', 'scale']);
+export const GROW_NEED = 2;
+
+// 마수 알: 아직 성장 전인지(합성 불가, 낮은 매출, 그림도 알)
+export function isEgg(p) {
+  return !!ITEMS[p.id].egg && (p.grow ?? 0) < GROW_NEED;
+}
+export function displayName(p) {
+  return isEgg(p) ? ITEMS[p.id].egg.name : ITEMS[p.id].name;
+}
+export function imgKey(p) {
+  return isEgg(p) ? `${p.id}_egg` : p.id;
+}
 const SUPPORT = new Set(['herb', 'whetstone', 'candle']);
 
 export function gradeBase(id, g) {
@@ -169,15 +233,20 @@ export function neighborsOf(dim, pieces) {
 
 /* ---------- 손님 ---------- */
 
+// 분야형 손님 6집단(단골이 될 수 있음) + 특별 손님 3집단(보너스만, 분야 입고는 맡지 않음)
 export const CUSTOMERS = {
-  adventurers: { name: '모험가 원정대', text: '모험 장비 상품마다 +2×등급', fav: 'gear' },
   witches: { name: '마녀 모임', text: '연금술 상품마다 +2×등급', fav: 'alch' },
+  adventurers: { name: '모험가 원정대', text: '모험 장비 상품마다 +2×등급', fav: 'gear' },
   school: { name: '마법학교 구매단', text: '마법 잡화 상품마다 +2×등급', fav: 'magic' },
+  ogre: { name: '오우거 미식회', text: '마계 식품 상품마다 +2×등급', fav: 'food' },
+  dwarf: { name: '드워프 보석상', text: '보물·귀금속 상품마다 +2×등급', fav: 'treasure' },
+  keeper: { name: '마수 사육사', text: '마수·알 상품마다 +2×등급', fav: 'beast' },
   goblins: { name: '고블린 행상단', text: '같은 상품이 2개 이상이면 그 상품마다 +3' },
   noble: { name: '귀족 수집가', text: '중급 이상 상품마다 +6×(등급-1)' },
   wanderers: { name: '떠돌이 시장 손님', text: '진열된 상품 종류마다 +3' },
 };
 export const CUSTOMER_IDS = Object.keys(CUSTOMERS);
+export const CAT_GUEST = Object.fromEntries(Object.entries(CUSTOMERS).filter(([, c]) => c.fav).map(([id, c]) => [c.fav, id]));
 
 /* ---------- 하루 매출 ---------- */
 
@@ -192,7 +261,7 @@ export function evaluate(pieces, ctx) {
   const grid = occupancy(dim, pieces);
   const seal = new Set(sealed);
   const out = new Map();
-  for (const p of pieces) out.set(p.uid, { base: gradeBase(p.id, p.g), bonuses: [], total: 0 });
+  for (const p of pieces) out.set(p.uid, { base: isEgg(p) ? ITEMS[p.id].egg.base : gradeBase(p.id, p.g), bonuses: [], total: 0 });
   const add = (uid, label, amount, kind, from = []) => {
     if (amount) out.get(uid).bonuses.push({ label, amount, kind, from });
   };
@@ -284,6 +353,30 @@ export function evaluate(pieces, ctx) {
       case 'rune': if (n.some((q) => cat(q) === 'alch') && n.some((q) => cat(q) === 'gear')) add(u, '두 분야 연결', 5 * g, 'place', from(n)); break;
       case 'pouch': if (new Set(n.map((q) => q.g)).size >= 2) add(u, '여러 등급', 4 * g, 'place', from(n)); break;
       case 'chest': if (surrounded(p)) add(u, '둘러싸임', 6 * g, 'place', from(n)); break;
+      case 'lavabread': { const m = n.filter((q) => q.id === 'startea' || q.id === 'mandrake'); if (m.length) add(u, '곁들임', 4 * g, 'place', from(m)); break; }
+      case 'ghostcheese': { const m = n.filter((q) => q.id === 'lavabread'); if (m.length) add(u, '용암빵', 3 * g, 'place', from(m)); break; }
+      case 'moonhoney': {
+        const k = kindsOf(n.filter((q) => cat(q) === 'food' && q.id !== 'moonhoney'));
+        if (k.size >= 2) add(u, '식품 세트', 5 * g, 'place', from(n.filter((q) => k.has(q.id))));
+        break;
+      }
+      case 'dragonegg': { const m = n.filter((q) => cat(q) === 'food'); if (m.length) add(u, '식품 이웃', 4 * g, 'place', from(m)); break; }
+      case 'startea': {
+        const f = n.filter((q) => cat(q) === 'food'), m = n.filter((q) => cat(q) === 'magic');
+        if (f.length && m.length) add(u, '다과 세트', 6 * g, 'place', from([...f, ...m]));
+        break;
+      }
+      case 'mandrake': {
+        const f = n.filter((q) => cat(q) === 'food'), a = n.filter((q) => cat(q) === 'alch');
+        if (f.length && a.length) add(u, '약선 세트', 6 * g, 'place', from([...f, ...a]));
+        break;
+      }
+      case 'ruby': if (!n.some((q) => cat(q) === 'treasure')) add(u, '홀로 빛남', 5 * g, 'place'); break;
+      case 'coin': { const m = n.filter((q) => q.id === 'coin'); add(u, '금화 더미', Math.min(m.length, 3) * 2 * g, 'place', from(m)); break; }
+      case 'crown': if (g >= Math.max(...pieces.map((q) => q.g))) add(u, '최고 등급', 6 * g, 'place'); break;
+      case 'grail': { const m = n.filter((q) => cat(q) === 'magic'); if (m.length) add(u, '마법 잡화', 4 * g, 'place', from(m)); break; }
+      case 'jewelbox': aura(p, '보석함', 3, (q) => q.id === 'ruby' || q.id === 'coin' || q.id === 'crown'); break;
+      case 'scale': { const t = scaleTarget(p, dim, grid, byUid); if (t) give(t, '감정 저울', 5 * g, 'place', p); break; }
     }
 
     // 변이(2등급 이상, 상품 종류 전체에 적용)
@@ -341,6 +434,29 @@ export function evaluate(pieces, ctx) {
       case 'pouch:B': aura(p, label, 1, () => true, 'mut'); break;
       case 'chest:A': if (surrounded(p)) self(6 * g); break;
       case 'chest:B': if (surrounded(p)) aura(p, label, 2, () => true, 'mut'); break;
+      case 'lavabread:A': case 'ghostcheese:A': case 'moonhoney:A': case 'dragonegg:A': case 'startea:A': case 'mandrake:A':
+        self(2 * g + (customer === 'ogre' && !mods.noCustomer ? 3 * g : 0));
+        break;
+      case 'lavabread:B': case 'dragonegg:B': aura(p, label, 2, (q) => cat(q) === 'food' && q.id !== p.id, 'mut'); break;
+      case 'ghostcheese:B': case 'moonhoney:B': aura(p, label, 1, (q) => cat(q) === 'food' && q.id !== p.id, 'mut'); break;
+      case 'startea:B': aura(p, label, 1, (q) => cat(q) === 'magic', 'mut'); break;
+      case 'mandrake:B': aura(p, label, 1, (q) => cat(q) === 'alch', 'mut'); break;
+      case 'ruby:A': self(4 * g); break;
+      case 'ruby:B': aura(p, label, 2, (q) => cat(q) !== 'treasure', 'mut'); break;
+      case 'coin:A': self(3 * g); break;
+      case 'coin:B': self(Math.min(n.filter((q) => q.id === 'coin').length, 3) * g); break;
+      case 'crown:A': self(4 * g); break;
+      case 'crown:B': aura(p, label, 2, () => true, 'mut'); break;
+      case 'grail:A': self(3 * g); break;
+      case 'grail:B': aura(p, label, 2, (q) => cat(q) === 'magic', 'mut'); break;
+      case 'jewelbox:A': self(3 * g); break;
+      case 'jewelbox:B': aura(p, label, 2, (q) => cat(q) === 'treasure' && q.id !== 'jewelbox', 'mut'); break;
+      case 'scale:A': { const t = scaleTarget(p, dim, grid, byUid); if (t) give(t, label, 4 * g, 'mut', p); break; }
+      case 'scale:B': aura(p, label, 1, (q) => cat(q) === 'treasure' && q.id !== 'scale', 'mut'); break;
+      case 'slime:A': case 'wyvern:A': case 'snail:A': case 'mimic:A': case 'griffin:A': self(3 * g); break;
+      case 'slime:B': case 'wyvern:B': case 'snail:B': case 'mimic:B': case 'griffin:B': aura(p, label, 1, () => true, 'mut'); break;
+      case 'nest:A': self(2 * g); break;
+      case 'nest:B': aura(p, label, 2, (q) => cat(q) === 'beast' && q.id !== 'nest' && !isEgg(q), 'mut'); break;
     }
   }
   for (const e of ext.values()) add(e.uid, e.label, e.amount, e.kind, e.from);
@@ -349,7 +465,7 @@ export function evaluate(pieces, ctx) {
   if (customer && !mods.noCustomer) {
     const c = CUSTOMERS[customer];
     const mul = mods.customerMul ?? 1;
-    const per = customer === 'school' && regulars.includes('school') ? 3 : 2;
+    const per = 2;
     if (c.fav) for (const p of pieces) if (cat(p) === c.fav) add(p.uid, c.name, per * p.g * mul, 'customer');
     if (customer === 'goblins') {
       const count = {};
@@ -393,6 +509,49 @@ function bowClear(p, dim, isEmpty) {
   return sides.some(([dx, dy]) => cells.every(([x, y]) => isEmpty(x + dx, y + dy)));
 }
 
+// 감정 저울: 화살표(회전 방향) 쪽에 바로 맞닿은 보물 중 등급이 가장 높은 하나
+function scaleTarget(p, dim, grid, byUid) {
+  const [dx, dy] = spearDir(p.rot);
+  const found = new Set();
+  for (const [x, y] of cellsOf(p)) {
+    const nx = x + dx, ny = y + dy;
+    if (!inside(dim, nx, ny)) continue;
+    const o = grid[ny][nx];
+    if (o !== null && o !== p.uid && ITEMS[byUid.get(o).id].cat === 'treasure') found.add(byUid.get(o));
+  }
+  return [...found].sort((a, b) => b.g - a.g || a.uid - b.uid)[0] ?? null;
+}
+
+// 마수 성장: 영업 시작 시점 배치로 판정. 조건을 채운 알은 성장도 +1, 정령 둥지와 붙어 있으면 +1 더(중첩 없음).
+export function growthCheck(pieces, dim, sealed = []) {
+  const byUid = new Map(pieces.map((p) => [p.uid, p]));
+  const nbr = neighborsOf(dim, pieces);
+  const grid = occupancy(dim, pieces);
+  const seal = new Set(sealed);
+  const out = new Map();
+  for (const p of pieces) {
+    if (!isEgg(p)) continue;
+    const n = [...nbr.get(p.uid)].map((u) => byUid.get(u));
+    let met = false, why = '';
+    switch (p.id) {
+      case 'slime': {
+        met = cellsOf(p).some(([x, y]) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) =>
+          inside(dim, x + dx, y + dy) && grid[y + dy][x + dx] === null && !seal.has(key(x + dx, y + dy))));
+        why = '옆 빈칸';
+        break;
+      }
+      case 'wyvern': { const m = n.find((q) => ITEMS[q.id].cat === 'food'); met = !!m; why = m ? displayName(m) : '식품'; break; }
+      case 'snail': { const m = n.find((q) => q.id === 'herb' || q.id === 'mushroom'); met = !!m; why = m ? displayName(m) : '약초·달빛 버섯'; break; }
+      case 'mimic': { const m = n.find((q) => ITEMS[q.id].cat === 'treasure'); met = !!m; why = m ? displayName(m) : '보물'; break; }
+      case 'griffin': { const m = n.find((q) => ITEMS[q.id].cat === 'gear'); met = !!m; why = m ? displayName(m) : '모험 장비'; break; }
+    }
+    const nest = n.some((q) => q.id === 'nest');
+    const gain = met ? 1 + (nest ? 1 : 0) : 0;
+    out.set(p.uid, { met, why, nest, gain, from: p.grow ?? 0, to: Math.min(GROW_NEED, (p.grow ?? 0) + gain) });
+  }
+  return out;
+}
+
 // 용의 창: 창끝 방향으로 이어진 장비(서로 다른 상품, 최대 2개)
 export function spearDir(rot) {
   return [[1, 0], [0, 1], [-1, 0], [0, -1]][((rot % 4) + 4) % 4];
@@ -419,7 +578,8 @@ function spearChain(p, dim, grid, byUid) {
 
 // 같은 상품·같은 등급 3개를 고른다: 기준 상품 + 가까운 순 2개
 export function mergeSet(pieces, target, extra = []) {
-  const pool = [...pieces, ...extra].filter((q) => q.uid !== target.uid && q.id === target.id && q.g === target.g);
+  if (isEgg(target)) return null;
+  const pool = [...pieces, ...extra].filter((q) => q.uid !== target.uid && q.id === target.id && q.g === target.g && !isEgg(q));
   if (pool.length < 2) return null;
   const dist = (q) => (q.x == null || target.x == null ? -1 : Math.abs(q.x - target.x) + Math.abs(q.y - target.y));
   pool.sort((a, b) => dist(a) - dist(b));

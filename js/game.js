@@ -1,13 +1,18 @@
 // 한 판의 진행: 영업 예고 → 입고(3개 중 1개, 하루 2번) → 정리·합성·변이·계약 → 영업 → 납부 판정
 // → 결산 보상 → 단골 제안. 상태는 JSON 하나로 저장되고, 무작위는 시드와 난수 상태를 함께 저장한다.
 import {
-  ITEMS, ITEM_IDS, CUSTOMERS, CUSTOMER_IDS, CATS, START_SIZE, EXPAND_STEPS, MAX_LIVES,
-  canPlace, anyFit, findSpot, evaluate, mergeSet, cellsOf,
+  ITEMS, ITEM_IDS, CUSTOMERS, CUSTOMER_IDS, CATS, CAT_IDS, CAT_GUEST, START_SIZE, EXPAND_STEPS, MAX_LIVES, GROW_NEED,
+  canPlace, anyFit, findSpot, evaluate, mergeSet, cellsOf, isEgg, growthCheck, neighborsOf,
 } from './rules.js';
 
 export const PICKS_PER_DAY = 2;
 export const SETTLE_EVERY = 5;
 export const FAVOR_TO_OFFER = 2;   // 호감도가 이만큼 쌓이면 단골 제안
+// 친밀도 단계(초기 시험값): 1 관심 고객 · 2 단골 · 4 친한 단골 · 6 VIP 단골
+export const STAGES = [{ at: 1, name: '관심 고객' }, { at: 2, name: '단골' }, { at: 4, name: '친한 단골' }, { at: 6, name: 'VIP 단골' }];
+export const START_SUPPORT_UNTIL = 10; // 첫 주력 단골 전, 이 날 영업이 끝날 때까지 1번 자리를 시작 분야로
+export const MAX_TICKETS = 2;
+const VISIT_CAP = { start: 4, regular: 5 }; // 방문 간격 상한(일)
 export const MAX_ACTIVE = 2;       // 기간형·조건형 계약을 합친 최대 수
 const UNDO_LIMIT = 80;
 
@@ -49,39 +54,63 @@ const pickOne = (s, list) => list[Math.floor(rand(s) * list.length)];
 
 /* ---------- 손님과 단골 ---------- */
 
-// 단골 효과는 매출 숫자가 아니라 입고·방문·비용에 작용한다
+// 단골은 분야형 6집단만. 주력 단골 하나가 입고 1번 자리를 그 분야로 채운다.
 export const REGULAR = {
-  adventurers: { cond: '장비를 3종류 이상 진열', effect: '4일 안에 한 번은 꼭 방문' },
-  witches: { cond: '연금술 조합(연금술 상품의 배치 보너스)을 활성화', effect: '연금술 상품 입고 비중 증가' },
-  school: { cond: '마법 잡화를 3종류 이상 진열', effect: '이 손님이 올 때 방문 보너스 +50%' },
-  goblins: { cond: '같은 상품을 3개 이상 진열', effect: '후보 새로고침 비용 절반' },
-  noble: { cond: '중급 이상 상품을 진열', effect: '3일마다 중급 상품 구매 기회(잔금 20)' },
-  wanderers: { cond: '세 분야를 모두 6종류 이상 진열', effect: '추가 입고 비용 절반' },
+  witches: { cond: '연금술 상품 2종 이상 진열' },
+  adventurers: { cond: '모험 장비 2종 이상 진열' },
+  school: { cond: '마법 잡화 2종 이상 진열' },
+  ogre: { cond: '식품 2종 이상이 서로 붙어 있음' },
+  dwarf: { cond: '보물 2종 이상 또는 Ⅱ등급 이상 보물 1개 진열' },
+  keeper: { cond: '마수 2종 이상 또는 성장 완료 마수 1개 진열' },
 };
+export const SPECIAL_GUESTS = ['goblins', 'noble', 'wanderers'];
 
-export function guestCondMet(s, guest, ev) {
-  const ids = s.pieces.map((p) => p.id);
-  const kinds = (cat) => new Set(s.pieces.filter((p) => ITEMS[p.id].cat === cat).map((p) => p.id)).size;
-  switch (guest) {
-    case 'adventurers': return kinds('gear') >= 3;
-    case 'witches': return s.pieces.some((p) => ITEMS[p.id].cat === 'alch' && ev.items.get(p.uid)?.bonuses.some((b) => b.kind === 'place' && b.amount > 0));
-    case 'school': return kinds('magic') >= 3;
-    case 'goblins': { const c = {}; ids.forEach((i) => { c[i] = (c[i] ?? 0) + 1; }); return Object.values(c).some((n) => n >= 3); }
-    case 'noble': return s.pieces.some((p) => p.g >= 2);
-    case 'wanderers': return ['alch', 'gear', 'magic'].every((c) => kinds(c) > 0) && new Set(ids).size >= 6;
-  }
-  return false;
+export function stageOf(favor) {
+  return STAGES.filter((x) => favor >= x.at).pop() ?? null;
+}
+export function nextStage(favor) {
+  return STAGES.find((x) => favor < x.at) ?? null;
 }
 
+export function guestCondMet(s, guest) {
+  if (!REGULAR[guest]) return false;
+  const cat = CUSTOMERS[guest].fav;
+  const mine = s.pieces.filter((p) => ITEMS[p.id].cat === cat);
+  const kinds = new Set(mine.map((p) => p.id)).size;
+  switch (guest) {
+    case 'ogre': {
+      const nbr = neighborsOf(s.dim, s.pieces);
+      const byUid = new Map(s.pieces.map((p) => [p.uid, p]));
+      return mine.some((p) => [...nbr.get(p.uid)].some((u) => { const q = byUid.get(u); return ITEMS[q.id].cat === 'food' && q.id !== p.id; }));
+    }
+    case 'dwarf': return kinds >= 2 || mine.some((p) => p.g >= 2);
+    case 'keeper': return kinds >= 2 || mine.some((p) => p.id !== 'nest' && !isEgg(p));
+    default: return kinds >= 2;
+  }
+}
+
+export function startSupport(s) {
+  return !s.main && !s.everMain && s.day <= START_SUPPORT_UNTIL;
+}
+
+// 손님 순서: 시드에서 뽑되, 시작 분야 손님은 2일 차에 처음 오고(첫 단골 전 간격 상한),
+// 단골 분야 손님도 간격 상한을 둔다. 여러 보장이 겹치면 가장 오래 못 온 손님부터.
 export function customerOn(s, day) {
   while (s.customers.length < day) {
     const n = s.customers.length + 1;
     const prev = s.customers.slice(-2);
+    const since = (g) => { const i = s.customers.lastIndexOf(g); return i < 0 ? n - 1 : n - 1 - i; };
+    const due = [];
+    const startGuest = CAT_GUEST[s.startCat];
+    if (startGuest && !s.everMain) {
+      if (n === 2) due.push([startGuest, 99]);
+      else if (n > 2 && since(startGuest) >= VISIT_CAP.start) due.push([startGuest, since(startGuest)]);
+    }
+    for (const g of s.regulars) if (n > 1 && since(g) >= VISIT_CAP.regular) due.push([g, since(g)]);
     let pick;
-    // 모험가 단골: 최근 3일 안에 오지 않았으면 다음 정할 날짜에 온다
-    if (s.regulars.includes('adventurers') && n > 1 && !s.customers.slice(-3).includes('adventurers')) pick = 'adventurers';
+    if (due.length) pick = due.sort((a, b) => b[1] - a[1])[0][0];
     else {
-      const pool = CUSTOMER_IDS.filter((c) => !prev.includes(c));
+      const pool = CUSTOMER_IDS.filter((c) => !prev.includes(c) && (n !== 1 || c !== startGuest));
       pick = pool[Math.floor(hashRand(s.seed, n) * pool.length)];
     }
     s.customers.push(pick);
@@ -153,7 +182,7 @@ function prepareContract(s, id) {
       const kind = pickOne(s, ids);
       return { kind, to: s.mutations[kind] === 'A' ? 'B' : 'A', cost: 15 };
     }
-    case 'ledger': return s.regulars.length ? { guest: s.regulars[0], gain: 40 } : null;
+    case 'ledger': return s.regulars.length ? { guest: s.main ?? s.regulars[0], gain: 40 } : null;
     case 'rekindle': return { cost: 50 };
     case 'rush': return { cost: rushCost(s) };
     case 'seal': {
@@ -164,7 +193,7 @@ function prepareContract(s, id) {
       return { cells };
     }
     case 'exclusive': {
-      const count = { alch: 0, gear: 0, magic: 0 };
+      const count = Object.fromEntries(CAT_IDS.map((c) => [c, 0]));
       s.pieces.forEach((p) => { count[ITEMS[p.id].cat]++; });
       const cat = Object.entries(count).sort((a, b) => b[1] - a[1])[0][0];
       return { cat };
@@ -206,13 +235,13 @@ export function describeContract(s, id, d) {
     case 'trade': return { gain: `${name(d.uid)} → 같은 등급 ${ITEMS[d.to].name}(같은 자리)`, cost: `잔금 ${d.cost}` };
     case 'recycle': return { gain: `${name(d.uid)}을(를) 한 등급 아래 3개로 분해`, cost: `잔금 ${d.cost} · 빈칸 2칸` };
     case 'whim': return { gain: `${ITEMS[d.kind].name} 전체의 변이 변경(${ITEMS[d.kind].muts[s.mutations[d.kind]][0]} → ${ITEMS[d.kind].muts[d.to][0]})`, cost: `잔금 ${d.cost}` };
-    case 'ledger': return { gain: `잔금 +${d.gain}`, cost: `${CUSTOMERS[d.guest].name} 단골 관계 종료` };
+    case 'ledger': return { gain: `잔금 +${d.gain}`, cost: `${CUSTOMERS[d.guest].name} 단골 관계와 호감도 종료${s.main === d.guest ? ' · 다음 입고부터 주력 추천 끝' : ''}` };
     case 'rekindle': return { gain: '영혼의 불꽃 1개 회복', cost: `잔금 ${d.cost} · 다음 결산 보상 포기` };
     case 'redsign': return { gain: '장비 상품마다 +3', cost: '연금술 상품마다 -2' };
     case 'smoke': return { gain: '연금술 상품마다 +3', cost: '장비 상품마다 -2' };
     case 'forbidden': return { gain: '마법 잡화 상품마다 +3', cost: '그날 납부액 +10' };
     case 'seal': return { gain: '납부액 -30%', cost: '표시된 빈칸 3개 사용 불가' };
-    case 'exclusive': return { gain: `${cat(d.cat)} 상품이 입고 후보에 더 자주`, cost: '다른 분야 등장 비중 감소' };
+    case 'exclusive': return { gain: `입고 3번 자리를 ${cat(d.cat)} 상품으로`, cost: '3번 자리에 다른 분야가 나오지 않음' };
     case 'frugal': return { gain: '납부액 -15%', cost: '추가 입고 구매 불가' };
     case 'promo': return { gain: '특별 손님 보너스 2배', cost: '상품마다 기본 매출 -1' };
     case 'debt': return { gain: `오늘 납부액 -${d.cut}`, cost: `${d.due}일 차 납부액 +${d.repay}` };
@@ -259,7 +288,7 @@ function emptyCells(s) {
 
 // 오늘 적용되는 계약·성장 효과
 export function modsFor(s, day = s.day) {
-  const mods = { catFlat: { alch: 0, gear: 0, magic: 0 }, catLabel: {}, perma: { ...s.perma }, noCustomer: false, customerMul: 1, baseCut: 0 };
+  const mods = { catFlat: Object.fromEntries(CAT_IDS.map((c) => [c, 0])), catLabel: {}, perma: { ...s.perma }, noCustomer: false, customerMul: 1, baseCut: 0 };
   const pay = { mul: 0, add: 0 };
   const sealed = [];
   const offer = { cat: null };
@@ -309,19 +338,19 @@ export function income(s, pieces = s.pieces) {
 
 /* ---------- 시작 ---------- */
 
-export function newGame(seed = (Math.random() * 2 ** 32) >>> 0) {
+export function newGame(seed = (Math.random() * 2 ** 32) >>> 0, startCat = 'alch') {
   const s = {
-    v: 3, seed, rng: seed | 0,
+    v: 4, seed, rng: seed | 0, startCat,
     day: 1, lives: MAX_LIVES, phase: 'pick',
     dim: { ...START_SIZE }, expand: 0,
     pieces: [], nextUid: 1,
     offers: null, offerGrade: 1, offerCat: null, hand: null, picksLeft: PICKS_PER_DAY, picksDone: 0,
     balance: 0, total: 0, bestDay: 0, history: [], earnedById: {},
     customers: [], contracts: [], contractOffer: null, signed: 0,
-    perma: { alch: 0, gear: 0, magic: 0 }, catBoost: {},
+    perma: Object.fromEntries(CAT_IDS.map((c) => [c, 0])), catBoost: {},
     mutations: {}, pendingMutation: null,
-    favor: {}, regulars: [], regularOffer: null,
-    priority: null, tickets: 0, mergeCount: 0, nobleDay: 0, bonusPick: null,
+    favor: {}, regulars: [], regularOffer: null, main: null, everMain: false,
+    priority: null, tickets: 0, freeTickets: 0, mergeCount: 0, bonusPick: null, recentCats: [],
     grace: false, rerolls: 0, extras: 0, bonusGradeNext: false, forfeitReward: false,
     rewardOffer: null, undo: [], last: null, final: null, briefSeen: false,
   };
@@ -338,7 +367,9 @@ function startDay(s) {
   s.offerGrade = s.bonusGradeNext ? 2 : 1;
   s.bonusGradeNext = false;
   s.offerCat = null;
-  if (s.bonusPick) { s.picksLeft++; s.offerCat = s.bonusPick.cat; s.bonusPick = null; }
+  if (s.bonusPick) { s.picksLeft++; s.offerCat = s.bonusPick.cat; if (s.bonusPick.grade) s.offerGrade = s.bonusPick.grade; s.bonusPick = null; }
+  // 주력 단골을 잃었고 다른 단골이 있으면 그 단골이 주력이 된다
+  if (!s.main && s.regulars.length) s.main = s.regulars[0];
   s.contractOffer = isContractDay(s.day) ? drawContracts(s) : null;
   s.offers = drawOffers(s);
   s.phase = 'pick';
@@ -364,16 +395,11 @@ function drawContracts(s) {
 
 /* ---------- 입고 후보 ---------- */
 
-const FAV = { adventurers: 'gear', witches: 'alch', school: 'magic' };
-
 function baseWeights(s) {
-  const { offer } = modsFor(s);
   const w = {};
   for (const id of ITEM_IDS) {
     let v = ITEMS[id].cells.length === 1 ? 10 : ITEMS[id].cells.length === 2 ? 9 : 7;
     const cat = ITEMS[id].cat;
-    if (s.regulars.includes('witches') && cat === 'alch') v *= 1.6;
-    if (offer.cat) v *= cat === offer.cat ? 2.5 : 0.6;
     if (s.catBoost[cat]) v *= s.catBoost[cat];
     if (!anyFit(s.dim, s.pieces, id, sealedNow(s)) && !s.pieces.some((p) => p.id === id)) v *= 0.25;
     w[id] = v;
@@ -381,7 +407,7 @@ function baseWeights(s) {
   return w;
 }
 
-// 우선 입고 상품은 더 자주 나오지만, 한 칸에서 60%를 넘지 않는다
+// 우선 입고 상품은 더 자주 나오지만, 한 칸에서 다른 후보 합의 1.5배를 넘지 않는다
 function withPriority(s, entries) {
   if (!s.priority) return entries;
   const i = entries.findIndex(([k]) => k === s.priority);
@@ -391,41 +417,81 @@ function withPriority(s, entries) {
   return entries.map(([k, v]) => [k, k === s.priority ? boosted : v]);
 }
 
-// 후보 세 개를 역할로 나눈다: 같은 종류 · 손님/단골 · 새 선택
+// 1번 자리: 주력 단골 분야(없으면 시작 분야 지원)
+export function slot1Cat(s) {
+  if (s.main) return CUSTOMERS[s.main].fav;
+  if (startSupport(s)) return s.startCat;
+  return null;
+}
+
+function drawSlot(s, role, taken, w) {
+  const pick = (pool, why, extra = {}) => {
+    const avail = pool.filter((id) => !taken.includes(id));
+    if (!avail.length) return null;
+    const id = weighted(s, withPriority(s, avail.map((k) => [k, w[k]])));
+    return { id, why, ...extra };
+  };
+  const all = ITEM_IDS;
+  if (role === 1) {
+    const cat = slot1Cat(s);
+    if (cat) return pick(all.filter((id) => ITEMS[id].cat === cat), s.main ? 'main' : 'start', { cat });
+    return pick(all, 'new');
+  }
+  if (role === 2) {
+    // 보유 상품: 합성 재료가 모자란 것(1~2개)을 우선
+    const count = {};
+    s.pieces.filter((p) => p.g === 1 && !isEgg(p)).forEach((p) => { count[p.id] = (count[p.id] ?? 0) + 1; });
+    s.pieces.filter((p) => isEgg(p)).forEach((p) => { count[p.id] = count[p.id] ?? 0; });
+    const lacking = Object.keys(count).filter((id) => count[id] % 3 !== 0 || count[id] === 0);
+    const owned = [...new Set(s.pieces.map((p) => p.id))];
+    return pick(lacking, 'same') ?? pick(owned, 'same') ?? pick(all, 'new');
+  }
+  // 3번: 독점 입고 계약이면 그 분야, 아니면 최근 덜 나온 분야를 우선
+  const { offer } = modsFor(s);
+  if (offer.cat) return pick(all.filter((id) => ITEMS[id].cat === offer.cat), 'exclusive', { cat: offer.cat });
+  const recent = s.recentCats.slice(-9);
+  const rare = CAT_IDS.filter((c) => !recent.includes(c));
+  if (rare.length && recent.length >= 6) {
+    const r = pick(all.filter((id) => rare.includes(ITEMS[id].cat)), 'new', { rare: true });
+    if (r) return r;
+  }
+  return pick(all, 'new');
+}
+
+// 후보 세 자리: 1 주력 단골(또는 시작 분야) · 2 보유 상품 · 3 새로운 상품. 같은 상품은 한 묶음에 한 번.
 export function drawOffers(s) {
   const w = baseWeights(s);
-  const chosen = [];
-  const take = (pool, why) => {
-    const avail = pool.filter((id) => !chosen.some((o) => o.id === id));
-    if (!avail.length) return false;
-    const id = weighted(s, withPriority(s, avail.map((k) => [k, w[k]])));
-    chosen.push({ id, why });
-    return true;
-  };
+  let chosen = [];
   if (s.offerCat) {
     const pool = ITEM_IDS.filter((id) => ITEMS[id].cat === s.offerCat);
-    while (chosen.length < 3) take(pool, 'reward');
-  } else {
-    const onShelf = [...new Set(s.pieces.map((p) => p.id))];
-    if (onShelf.length) take(onShelf, 'same');
-    const guestPool = new Set();
-    for (const g of [customerOn(s, s.day), customerOn(s, s.day + 1), ...s.regulars]) {
-      if (FAV[g]) ITEM_IDS.filter((id) => ITEMS[id].cat === FAV[g]).forEach((id) => guestPool.add(id));
-      if (g === 'goblins') onShelf.forEach((id) => guestPool.add(id));
-      if (g === 'noble') s.pieces.filter((p) => p.g >= 2).forEach((p) => guestPool.add(p.id));
-      if (g === 'wanderers') ITEM_IDS.filter((id) => !onShelf.includes(id)).forEach((id) => guestPool.add(id));
+    while (chosen.length < 3) {
+      const avail = pool.filter((id) => !chosen.some((o) => o.id === id));
+      chosen.push({ id: weighted(s, avail.map((k) => [k, w[k]])), why: 'reward' });
     }
-    take([...guestPool], 'guest');
-    const fresh = ITEM_IDS.filter((id) => !onShelf.includes(id));
-    while (chosen.length < 3) if (!take(fresh.length > chosen.length ? fresh : ITEM_IDS, 'new')) take(ITEM_IDS, 'new');
+  } else {
+    for (const role of [1, 2, 3]) {
+      const o = drawSlot(s, role, chosen.map((x) => x.id), w);
+      if (o) chosen.push(o);
+    }
   }
-  // 셋 다 놓을 데가 없으면 하나는 1칸 상품으로
   const sealed = sealedNow(s);
   if (chosen.every((o) => !anyFit(s.dim, s.pieces, o.id, sealed))) {
     const ones = ITEM_IDS.filter((id) => ITEMS[id].cells.length === 1 && !chosen.some((o) => o.id === id));
     chosen[2] = { id: pickOne(s, ones), why: 'new' };
   }
-  return chosen.map((o) => ({ ...o, prio: o.id === s.priority }));
+  chosen = chosen.map((o) => ({ ...o, prio: o.id === s.priority }));
+  s.recentCats = [...s.recentCats, ...chosen.map((o) => ITEMS[o.id].cat)].slice(-12);
+  return chosen;
+}
+
+// 1번 자리만 다시 뽑기(주력 단골 보상 이용권). 같은 상품이 다시 나올 수 있다.
+export function rerollSlot1(s) {
+  if (s.phase !== 'pick' || s.freeTickets <= 0 || !s.offers?.length || !slot1Cat(s) || s.offerCat) return false;
+  snapshot(s);
+  s.freeTickets--;
+  const o = drawSlot(s, 1, s.offers.slice(1).map((x) => x.id), baseWeights(s));
+  if (o) s.offers[0] = { ...o, prio: o.id === s.priority };
+  return true;
 }
 
 /* ---------- 되돌리기 ---------- */
@@ -467,6 +533,7 @@ export function choose(s, index) {
   if (s.phase !== 'pick' || !s.offers?.[index]) return false;
   snapshot(s);
   s.hand = { id: s.offers[index].id, g: s.offerGrade, rot: 0 };
+  if (ITEMS[s.hand.id].egg) s.hand.grow = 0;
   s.offers = null;
   s.phase = 'place';
   return true;
@@ -486,6 +553,7 @@ function maybeMutation(s, id, g) {
 export function placeHand(s, x, y, rot) {
   if (s.phase !== 'place' || !s.hand) return false;
   const piece = { uid: s.nextUid, id: s.hand.id, g: s.hand.g, x, y, rot: ((rot % 4) + 4) % 4 };
+  if (ITEMS[piece.id].egg) piece.grow = s.hand.grow ?? 0;
   if (!canPlace(s.dim, s.pieces, piece, undefined, sealedNow(s))) return false;
   snapshot(s);
   s.pieces.push(piece);
@@ -560,13 +628,12 @@ export function chooseMutation(s, m) {
 
 export function rerollCost(s) {
   if (s.grace) return 0;
-  const c = 3 + 2 * s.rerolls;
-  return s.regulars.includes('goblins') ? Math.ceil(c / 2) : c;
+  return 3 + 2 * s.rerolls;
 }
 export function rerollFullCost(s) { return s.grace ? 0 : 3 + 2 * s.rerolls; }
 
 export function reroll(s) {
-  if (s.phase !== 'pick') return false;
+  if (s.phase !== 'pick' || s.offers?.every((o) => o.why === 'reward')) return false;
   const cost = rerollCost(s);
   if (s.balance < cost) return false;
   snapshot(s);
@@ -578,8 +645,7 @@ export function reroll(s) {
 
 export function extraCost(s) {
   if (s.tickets > 0) return 0;
-  const c = 8 + 6 * s.extras;
-  return s.regulars.includes('wanderers') ? Math.ceil(c / 2) : c;
+  return 8 + 6 * s.extras;
 }
 export function extraBlocked(s) { return modsFor(s).noExtra; }
 
@@ -594,18 +660,6 @@ export function buyExtra(s) {
   return true;
 }
 
-export const NOBLE_COST = 20;
-export function nobleDealOpen(s) {
-  return s.regulars.includes('noble') && s.day % 3 === 0 && s.nobleDay !== s.day && s.phase === 'arrange';
-}
-export function buyNoble(s) {
-  if (!nobleDealOpen(s) || s.balance < NOBLE_COST) return false;
-  snapshot(s);
-  s.balance -= NOBLE_COST;
-  s.nobleDay = s.day;
-  addPicks(s, 1, 2);
-  return true;
-}
 
 export function expandCost(s) { return s.expand < EXPAND_STEPS.length ? 60 + 40 * s.expand : null; }
 
@@ -714,7 +768,7 @@ export function sign(s, id) {
       break;
     }
     case 'whim': s.balance -= d.cost; s.mutations[d.kind] = d.to; break;
-    case 'ledger': s.regulars = s.regulars.filter((g) => g !== d.guest); s.favor[d.guest] = 0; s.balance += d.gain; break;
+    case 'ledger': s.regulars = s.regulars.filter((g) => g !== d.guest); s.favor[d.guest] = 0; if (s.main === d.guest) s.main = null; s.balance += d.gain; break;
     case 'rekindle': s.balance -= d.cost; s.lives = Math.min(MAX_LIVES, s.lives + 1); s.forfeitReward = true; break;
   }
   return true;
@@ -744,7 +798,7 @@ function condMet(s, c, ev, sales) {
     case 'dept': return kinds(null) >= 8;
     case 'focus': {
       if (sales <= 0) return false;
-      const best = ['alch', 'gear', 'magic'].map((k) => [k, catSales(k)]).sort((a, b) => b[1] - a[1])[0];
+      const best = CAT_IDS.map((k) => [k, catSales(k)]).sort((a, b) => b[1] - a[1])[0];
       if (best[1] / sales >= 0.7) { c.data.cat = best[0]; return true; }
       return false;
     }
@@ -797,12 +851,25 @@ export function openShop(s) {
     s.earnedById[p.id] = (s.earnedById[p.id] ?? 0) + v;
   }
 
-  // 호감도: 특별 손님의 선호 조건을 채우면 방문당 +1
-  let favorGain = null;
-  if (!mods.noCustomer && guestCondMet(s, customer, ev)) {
-    s.favor[customer] = (s.favor[customer] ?? 0) + 1;
+  // 호감도: 분야형 손님의 조건을 영업 시작 배치로 채우면 방문당 +1
+  let favorGain = null, stageUp = null;
+  if (!mods.noCustomer && guestCondMet(s, customer)) {
+    const before = s.favor[customer] ?? 0;
+    s.favor[customer] = before + 1;
     favorGain = customer;
+    const st = stageOf(s.favor[customer]);
+    if (s.regulars.includes(customer) && st && st.at === s.favor[customer] && st.at >= 4) stageUp = { guest: customer, stage: st.name };
     if (s.favor[customer] >= FAVOR_TO_OFFER && !s.regulars.includes(customer)) s.regularOffer = customer;
+  }
+
+  // 마수 성장: 영업 시작 배치 기준, 새 매출은 다음 영업부터
+  const growth = [];
+  const gc = growthCheck(s.pieces, s.dim, sealedNow(s));
+  for (const p of s.pieces) {
+    const r = gc.get(p.uid);
+    if (!r) continue;
+    p.grow = r.to;
+    growth.push({ uid: p.uid, id: p.id, ...r, hatched: r.to >= GROW_NEED });
   }
 
   // 조건형 계약 진행
@@ -827,7 +894,7 @@ export function openShop(s) {
   if (!ok) s.lives--;
   const settle = isSettleDay(s.day);
   s.history.push({ day: s.day, sales, pay, ok });
-  s.last = { day: s.day, sales, pay, ok, gain, sum: ev.sum, perItem, customer, settle, lives: s.lives, favorGain, condResults, debt: !!debtDueToday(s) };
+  s.last = { day: s.day, sales, pay, ok, gain, sum: ev.sum, perItem, customer, settle, lives: s.lives, favorGain, stageUp, growth, condResults, debt: !!debtDueToday(s) };
   s.undo = [];
   s.grace = false;
   s.contractOffer = null;
@@ -840,6 +907,7 @@ export function openShop(s) {
   if (settle && ok) {
     if (s.forfeitReward) { s.forfeitReward = false; s.last.forfeited = true; }
     else { s.rewardOffer = drawRewards(s); s.phase = 'reward'; return s.last; }
+    if (s.regulars.length) { s.phase = 'mainpick'; return s.last; }
   }
   nextDay(s);
   return s.last;
@@ -858,16 +926,18 @@ export function acceptRegular(s, swapOut = null) {
   if (s.regulars.length >= 2) {
     if (!swapOut || !s.regulars.includes(swapOut)) return false;
     s.regulars = s.regulars.filter((r) => r !== swapOut);
+    s.favor[swapOut] = 0;                // 관계를 끝내면 호감도는 0
+    if (s.main === swapOut) s.main = g;
   }
   s.regulars.push(g);
+  if (!s.main) { s.main = g; s.everMain = true; } // 첫 단골은 바로 주력
   s.regularOffer = null;
   return true;
 }
 
 export function refuseRegular(s) {
   if (!s.regularOffer) return false;
-  s.favor[s.regularOffer] = 0;
-  s.regularOffer = null;
+  s.regularOffer = null; // 제안을 거절해도 기존 관계와 호감도는 그대로
   return true;
 }
 
@@ -910,7 +980,31 @@ export function takeReward(s, key, arg = null) {
   if (key === 'life') s.lives = Math.min(MAX_LIVES, s.lives + 1);
   if (key === 'cash') s.balance += 30;
   s.rewardOffer = null;
+  if (s.regulars.length) { s.phase = 'mainpick'; return true; }
   nextDay(s);
+  return true;
+}
+
+// 주력 단골 결산 보상: 친밀도에 따라 고를 수 있는 것이 늘고, 한 번만 받는다
+export function mainRewardOptions(s) {
+  if (!s.main) return [];
+  const f = s.favor[s.main] ?? 0;
+  const out = ['ticket'];
+  if (f >= 4) out.push('g1');
+  if (f >= 6) out.push('g2');
+  return out;
+}
+
+export function settleMain(s, reward, nextMain) {
+  if (s.phase !== 'mainpick') return false;
+  const opts = mainRewardOptions(s);
+  if (opts.length && !opts.includes(reward)) return false;
+  if (nextMain && !s.regulars.includes(nextMain)) return false;
+  const cat = s.main ? CUSTOMERS[s.main].fav : null;
+  if (reward === 'ticket') s.freeTickets = Math.min(MAX_TICKETS, s.freeTickets + 1);
+  if (reward === 'g1' || reward === 'g2') s.bonusPick = { cat, grade: reward === 'g2' ? 2 : 1 };
+  if (nextMain) { s.main = nextMain; s.everMain = true; }
+  nextDay(s); // 새 주력은 다음 날 후보부터
   return true;
 }
 
@@ -925,7 +1019,7 @@ export function nickname(s) {
   const cats = {};
   s.pieces.forEach((p) => { cats[ITEMS[p.id].cat] = (cats[ITEMS[p.id].cat] ?? 0) + 1; });
   const [cat, m] = Object.entries(cats).sort((a, b) => b[1] - a[1])[0];
-  if (m / s.pieces.length >= 0.6) return { alch: '수상한 골목 약방', gear: '모험가 단골 무기점', magic: '먼지 쌓인 마법 골동품점' }[cat];
+  if (m / s.pieces.length >= 0.6) return { alch: '수상한 골목 약방', gear: '모험가 단골 무기점', magic: '먼지 쌓인 마법 골동품점', food: '오우거도 줄 서는 마계 식당', treasure: '드워프도 탐내는 보물 가게', beast: '알 냄새 나는 마수 분양소' }[cat];
   return '뭐든지 파는 마계 잡화점';
 }
 
