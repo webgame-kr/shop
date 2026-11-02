@@ -315,3 +315,38 @@ test('진열대는 정해진 크기까지만 커진다', () => {
   assert.deepEqual(s.dim, { cols: 7, rows: 6 });
   assert.deepEqual(G.newGame(1).dim, START_SIZE);
 });
+
+test('플레이 테스트 보고서 수정: 계약 중첩·반복, 독점 입고 대가, 알 이름, 3번 자리', () => {
+  // 최근 두 번의 제안에 나온 계약은 다음 제안에 다시 오지 않고, 성공한 무장 전시회는 다시 오지 않는다
+  const u = G.newGame(5);
+  u.pieces = [P('sword', 0, 0), P('herb', 2, 0), P('potion', 3, 0)];
+  for (let i = 0; i < 8; i++) {
+    const before = u.recentContracts.slice();
+    const ids = G.drawContracts(u)?.ids ?? [];
+    for (const id of ids) assert.ok(!before.includes(id), `${id} 반복 (${before})`);
+  }
+  u.doneContracts = ['armsfair'];
+  for (let i = 0; i < 20; i++) assert.ok(!(G.drawContracts(u)?.ids ?? []).includes('armsfair'));
+
+  // 독점 입고는 서명할 때 잔금을 낸다
+  const e = arrange(3);
+  e.balance = 30;
+  e.contractOffer = { ids: ['exclusive'], data: { exclusive: { cat: 'gear', cost: 12 } } };
+  assert.ok(G.sign(e, 'exclusive'));
+  assert.equal(e.balance, 18);
+  assert.match(G.describeContract(e, 'exclusive', { cat: 'gear', cost: 12 }).cost, /잔금 12/);
+
+  // 교환 문구는 알 이름을 쓴다
+  const tr = arrange(4);
+  tr.pieces = [{ ...P('snail', 0, 0), grow: 0 }];
+  const d = G.describeContract(tr, 'trade', { uid: tr.pieces[0].uid, to: 'wyvern', cost: 8 });
+  assert.match(d.gain, /정령 고치 → 같은 등급 와이번 알/);
+
+  // 3번 자리 새 상품은 진열 중이 아닌 상품
+  const n = G.newGame(8, 'alch');
+  n.pieces = ['potion', 'herb', 'sword', 'tome', 'ruby', 'coin'].map((id, i) => P(id, i % 5, Math.floor(i / 5)));
+  for (let i = 0; i < 40; i++) {
+    const o = G.drawOffers(n)[2];
+    if (o.why === 'new') assert.ok(!n.pieces.some((p) => p.id === o.id), o.id);
+  }
+});

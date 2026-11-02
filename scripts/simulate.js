@@ -1,9 +1,10 @@
 // 납부액 곡선 검증: 여러 시드에서 봇으로 끝까지 돌려 생존 일수 분포를 본다.
-//   node scripts/simulate.js [판 수]
-import { canPlace, ITEMS } from '../js/rules.js';
+//   node scripts/simulate.js [판 수] [casual|greedy]
+import { canPlace, cellsOf, shapeOf, ITEMS } from '../js/rules.js';
 import * as G from '../js/game.js';
 
 const runs = Number(process.argv[2] ?? 200);
+const only = process.argv[3] ?? null;
 const MAX_DAY = 80;
 
 function spots(s, id, g) {
@@ -16,6 +17,29 @@ function spots(s, id, g) {
         if (canPlace(s.dim, s.pieces, p, undefined, sealed)) out.push(p);
       }
   return out;
+}
+
+// greedy용 후보 자리: 모양이 같은 회전은 한 번만, 이미 놓인 상품과 맞닿는 자리만 본다(효과는 거의 인접에서 나온다).
+// 맞닿는 자리가 없으면 처음 찾은 자리 하나.
+function nearSpots(s, id, g) {
+  const occ = new Set(s.pieces.flatMap((p) => cellsOf(p).map(([x, y]) => `${x},${y}`)));
+  const seen = new Set();
+  const out = [];
+  let first = null;
+  const sealed = G.sealedNow(s);
+  for (let rot = 0; rot < 4; rot++) {
+    const key = JSON.stringify(shapeOf(id, rot));
+    if (seen.has(key)) continue;
+    seen.add(key);
+    for (let y = 0; y < s.dim.rows; y++)
+      for (let x = 0; x < s.dim.cols; x++) {
+        const p = { uid: -1, id, g, x, y, rot };
+        if (!canPlace(s.dim, s.pieces, p, undefined, sealed)) continue;
+        first ??= p;
+        if (cellsOf(p).some(([cx, cy]) => occ.has(`${cx + 1},${cy}`) || occ.has(`${cx - 1},${cy}`) || occ.has(`${cx},${cy + 1}`) || occ.has(`${cx},${cy - 1}`))) out.push(p);
+      }
+  }
+  return out.length ? out : first ? [first] : [];
 }
 
 // 아무 후보나 골라 처음 빈 곳에 놓는다. 합성·잔금·계약은 쓰지 않는다.
@@ -45,7 +69,7 @@ function greedy(s) {
   if (s.phase === 'pick') {
     let best = null;
     s.offers.forEach(({ id }, i) => {
-      for (const sp of spots(s, id, s.offerGrade)) {
+      for (const sp of nearSpots(s, id, s.offerGrade)) {
         const v = G.income(s, [...s.pieces, sp]).sum.total;
         if (!best || v > best.v) best = { v, i, sp };
       }
@@ -83,12 +107,13 @@ function play(seed, bot) {
   return s;
 }
 
-for (const [name, bot] of [['casual', casual], ['greedy', greedy]]) {
+for (const [name, bot] of [['casual', casual], ['greedy', greedy]].filter(([n]) => !only || n === only)) {
+  const t0 = Date.now();
   const days = [];
   for (let i = 1; i <= runs; i++) days.push(play(i * 7919, bot).day);
   days.sort((a, b) => a - b);
   const q = (f) => days[Math.floor(f * (days.length - 1))];
-  console.log(`[${name}] ${runs}판 생존 일수  최소 ${q(0)} / 하위10% ${q(0.1)} / 중앙 ${q(0.5)} / 상위10% ${q(0.9)} / 최대 ${q(1)}`);
+  console.log(`[${name}] ${runs}판 생존 일수  최소 ${q(0)} / 하위10% ${q(0.1)} / 중앙 ${q(0.5)} / 상위10% ${q(0.9)} / 최대 ${q(1)} · ${((Date.now() - t0) / 1000).toFixed(1)}초`);
 }
 const curve = [1, 2, 3, 5, 10, 15, 20, 25, 30, 40].map((d) => `${d}일 ${G.basePay(d)}`).join(' · ');
 console.log(`납부액: ${curve}`);

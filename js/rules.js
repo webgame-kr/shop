@@ -86,7 +86,7 @@ export const ITEMS = {
     muts: { A: ['화산 특제', '자신 +{2}, 오우거 미식회가 오는 날 +{3} 더'], B: ['나눔 빵', '붙어 있는 다른 식품마다 +{2}'] } },
   ghostcheese: { name: '유령 치즈', cat: 'food', cells: ONE, base: 3, effect: '용암빵과 붙으면 자신 +{3}',
     muts: { A: ['숙성 치즈', '자신 +{2}, 오우거 미식회가 오는 날 +{3} 더'], B: ['치즈 플래터', '붙어 있는 다른 식품마다 +{1}'] } },
-  moonhoney: { name: '달빛 꿀', cat: 'food', cells: ONE, base: 2, effect: '서로 다른 다른 식품 2종 이상과 붙으면 자신 +{5}',
+  moonhoney: { name: '달빛 꿀', cat: 'food', cells: ONE, base: 2, effect: '서로 다른 식품 2종 이상과 붙으면 자신 +{5}',
     muts: { A: ['왕실 꿀', '자신 +{2}, 오우거 미식회가 오는 날 +{3} 더'], B: ['꿀 바름', '붙어 있는 다른 식품마다 +{1}'] } },
   dragonegg: { name: '용의 알', cat: 'food', cells: SQ, base: 13, effect: '다른 식품과 붙으면 자신 +{4}',
     muts: { A: ['용알 정식', '자신 +{2}, 오우거 미식회가 오는 날 +{3} 더'], B: ['대가족 식탁', '붙어 있는 다른 식품마다 +{2}'] } },
@@ -163,12 +163,20 @@ export function gradeLabel(g) {
 /* ---------- 모양 ---------- */
 
 // 화면 좌표(y가 아래)에서 시계 방향 90도: (x, y) → (-y, x)
+// 배치 판정마다 불리므로 상품·회전별로 한 번만 계산해 둔다(돌려주는 배열은 고정, 고치지 말 것)
+const shapeCache = new Map();
 export function shapeOf(id, rot = 0) {
+  const r = ((rot % 4) + 4) % 4;
+  const k = `${id}/${r}`;
+  let out = shapeCache.get(k);
+  if (out) return out;
   let cells = ITEMS[id].cells.map(([x, y]) => [x, y]);
-  for (let i = 0; i < ((rot % 4) + 4) % 4; i++) cells = cells.map(([x, y]) => [-y, x]);
+  for (let i = 0; i < r; i++) cells = cells.map(([x, y]) => [-y, x]);
   const mx = Math.min(...cells.map((c) => c[0]));
   const my = Math.min(...cells.map((c) => c[1]));
-  return cells.map(([x, y]) => [x - mx, y - my]).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  out = Object.freeze(cells.map(([x, y]) => Object.freeze([x - mx, y - my])).sort((a, b) => a[1] - b[1] || a[0] - b[0]));
+  shapeCache.set(k, out);
+  return out;
 }
 
 export function sizeOf(id, rot = 0) {
@@ -198,9 +206,15 @@ export function occupancy(dim, pieces, ignoreUid) {
 }
 
 export function canPlace(dim, pieces, piece, ignoreUid, sealed = []) {
-  const grid = occupancy(dim, pieces, ignoreUid);
-  const seal = new Set(sealed);
-  return cellsOf(piece).every(([x, y]) => inside(dim, x, y) && grid[y][x] === null && !seal.has(key(x, y)));
+  const mine = cellsOf(piece);
+  if (!mine.every(([x, y]) => inside(dim, x, y))) return false;
+  const want = new Set(mine.map(([x, y]) => key(x, y)));
+  if (sealed.some((k) => want.has(k))) return false;
+  for (const p of pieces) {
+    if (p.uid === ignoreUid) continue;
+    for (const [x, y] of cellsOf(p)) if (want.has(key(x, y))) return false;
+  }
+  return true;
 }
 
 export function anyFit(dim, pieces, id, sealed = []) {

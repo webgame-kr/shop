@@ -43,9 +43,8 @@ const itemLabel = (p) => `${displayName(p)} ${roman(p.g ?? 1)}${isEgg(p) ? ` (�
 
 function board(s) {
   const { cols, rows } = s.dim;
-  const sealed = new Set(G.sealedNow(s).map(([x, y]) => `${x},${y}`));
   const grid = Array.from({ length: rows }, () => Array(cols).fill(' . '));
-  for (const [x, y] of sealed) grid[y][x] = ' # ';
+  for (const k of G.sealedNow(s)) { const [x, y] = k.split(',').map(Number); if (grid[y]) grid[y][x] = ' # '; } // 봉인 칸은 "x,y" 문자열
   for (const p of s.pieces) for (const [x, y] of cellsOf(p)) if (grid[y]?.[x] !== undefined) grid[y][x] = String(p.uid).padStart(3);
   say(`진열대 ${cols}×${rows}  (숫자 = 상품 번호, . = 빈칸, # = 봉인)`);
   say('     ' + Array.from({ length: cols }, (_, x) => String(x).padStart(3)).join(''));
@@ -86,8 +85,16 @@ function show(s) {
     return;
   }
   const today = G.customerOn(s, s.day), tomorrow = G.customerOn(s, s.day + 1);
-  say(`=== ${s.day}일 차${G.isSettleDay(s.day) ? ' (결산일)' : ''} · 단계 ${s.phase} · 불꽃 ${'●'.repeat(s.lives)}${'○'.repeat(3 - s.lives)} · 잔금 ${s.balance} ===`);
-  say(`납부액 ${G.payFor(s)} · 예상 매출 ${G.income(s).sum.total} · 시작 분야 ${CATS[s.startCat].name}${G.startSupport(s) ? '(지원 중)' : ''}`);
+  const flames = `${'●'.repeat(s.lives)}${'○'.repeat(3 - s.lives)}`;
+  const lead = s.main ? `주력 단골 ${guestName(s.main)} (입고 1번 ${CATS[CUSTOMERS[s.main].fav].name})` : G.startSupport(s) ? `시작 분야 ${CATS[s.startCat].name} (지원 중, ${G.START_SUPPORT_UNTIL}일 차까지)` : '주력 단골 없음';
+  if (s.phase === 'reward' || s.phase === 'mainpick') {
+    // 결산 보상 단계: 영업은 이미 끝났으므로 그날의 판정 결과를 보여 준다
+    say(`=== ${s.day}일 차 결산 · ${s.phase === 'reward' ? '성장 보상' : '주력 단골 결산'} · 불꽃 ${flames} · 잔금 ${s.balance} ===`);
+    say(`오늘 영업: 매출 ${s.last.sales} / 납부 ${s.last.pay} 완납 · 다음 영업은 ${s.day + 1}일 차 · ${lead}`);
+  } else {
+    say(`=== ${s.day}일 차${G.isSettleDay(s.day) ? ' (결산일)' : ''} · 단계 ${s.phase} · 불꽃 ${flames} · 잔금 ${s.balance} ===`);
+    say(`납부액 ${G.payFor(s)} · 예상 매출 ${G.income(s).sum.total} · ${lead}`);
+  }
   say(`손님 오늘 ${guestName(today)}${G.REGULAR[today] ? ` [호감 조건: ${G.REGULAR[today].cond} → ${G.guestCondMet(s, today) ? '충족' : '아직'}]` : ' [특별 손님]'} · 내일 ${guestName(tomorrow)}`);
   if (s.regulars.length) {
     say('단골: ' + s.regulars.map((g) => `${guestName(g)}${s.main === g ? '(주력)' : ''} 호감 ${s.favor[g] ?? 0} ${G.stageOf(s.favor[g] ?? 0)?.name ?? ''}`).join(' · '));
@@ -116,7 +123,9 @@ function show(s) {
     for (const id of s.contractOffer.ids) {
       const c = G.CONTRACTS[id];
       const d = G.describeContract(s, id, s.contractOffer.data[id]);
-      say(`  ${id} · ${c.name} [${c.type}] 받는 것: ${d.gain} / 대가: ${d.cost}${d.cond ? ` / 조건: ${d.cond}` : ''}${G.canSign(s, id) ? '' : ' (지금 서명 불가)'}`);
+      const span = c.span ? ` / 기간 ${c.span[1] - c.span[0] + 1}일(${s.day + c.span[0]}~${s.day + c.span[1]}일 차)` : ' / 즉시';
+      const can = G.canSign(s, id);
+      say(`  ${id} · ${c.name} [${{ instant: '즉시 거래', period: '기간형', cond: '조건형' }[c.type]}] 받는 것: ${d.gain} / 대가: ${d.cost}${d.cond ? ` / 조건: ${d.cond}` : ''}${span}${can.ok ? '' : ` (지금 서명 불가: ${can.why})`}`);
     }
   }
   if (s.phase === 'pick') {
@@ -150,7 +159,11 @@ function judge(s, r) {
   if (r.favorGain) say(`  호감 +1: ${guestName(r.favorGain)}`);
   if (r.stageUp) say(`  단계 상승: ${guestName(r.stageUp.guest)} → ${r.stageUp.stage}`);
   for (const g of r.growth ?? []) if (g.gain) say(`  성장: ${ITEMS[g.id].egg.name} ${g.from}→${g.to}${g.hatched ? ` 부화! ${ITEMS[g.id].name}` : ''}`);
-  for (const c of r.condResults ?? []) say(`  조건형 ${G.CONTRACTS[c.id]?.name ?? c.id}: ${JSON.stringify(c)}`);
+  for (const c of r.condResults ?? []) {
+    const name = G.CONTRACTS[c.id]?.name ?? c.id;
+    const need = G.CONTRACTS[c.id]?.need;
+    say(`  조건형 ${name}: ${c.result === 'success' ? `달성! 받는 것: ${G.describeContract(s, c.id, {}).gain}` : c.result === 'fail' ? '실패 · 계약금만 잃음' : `진행 ${c.progress}${need ? ` / ${need}` : ''}`}`);
+  }
   say('');
 }
 
@@ -176,6 +189,19 @@ const HELP = `명령:
   undo                   되돌리기
   item <상품id>          상품 정보 · items: 전체 목록
   guests                 손님 목록과 호감 조건`;
+
+// 놓을 수 없는 이유를 하나 골라 알려 준다
+function placeWhy(s, id, x, y, rot) {
+  const cells = cellsOf({ id, x, y, rot: ((rot % 4) + 4) % 4 });
+  const out = cells.filter(([cx, cy]) => cx < 0 || cy < 0 || cx >= s.dim.cols || cy >= s.dim.rows);
+  if (out.length) return `진열대 밖이에요(${out.map(([a, b]) => `(${a},${b})`).join(' ')}). 진열대는 ${s.dim.cols}×${s.dim.rows}, 좌표는 0부터`;
+  const sealed = new Set(G.sealedNow(s));
+  const sc = cells.filter(([a, b]) => sealed.has(`${a},${b}`));
+  if (sc.length) return `봉인된 칸이에요(${sc.map(([a, b]) => `(${a},${b})`).join(' ')})`;
+  const hit = s.pieces.filter((p) => cellsOf(p).some(([a, b]) => cells.some(([c, d]) => a === c && b === d)));
+  if (hit.length) return `다른 상품과 겹쳐요: ${hit.map((p) => `#${p.uid} ${displayName(p)}`).join(', ')}`;
+  return '놓을 수 없는 자리예요';
+}
 
 const ACT = {
   pick: (s) => G.choose(s, num(args[0], '후보 번호') - 1),
@@ -237,7 +263,15 @@ if (cmd === 'help') {
   console.log(out.join('\n'));
 } else if (ACT[cmd]) {
   const s = load();
-  if (!ACT[cmd](s)) fail(`\`${[cmd, ...args].join(' ')}\` 실행 불가 (단계 ${s.phase}). \`show\`로 할 수 있는 일을 확인하세요.`);
+  if (!ACT[cmd](s)) {
+    if ((cmd === 'place' && s.phase === 'place') || (cmd === 'move' && s.pieces.some((p) => p.uid === Number(args[0])))) {
+      const id = cmd === 'place' ? s.hand.id : s.pieces.find((p) => p.uid === Number(args[0])).id;
+      const [x, y, r] = cmd === 'place' ? args : args.slice(1);
+      fail(`${cmd} 실패: ${placeWhy(s, id, Number(x), Number(y), Number(r ?? 0))}`);
+    }
+    if (cmd === 'sign' && s.contractOffer?.ids.includes(args[0])) fail(`서명 불가: ${G.canSign(s, args[0]).why}`);
+    fail(`\`${[cmd, ...args].join(' ')}\` 실행 불가 (단계 ${s.phase}). \`show\`로 할 수 있는 일을 확인하세요.`);
+  }
   G.seeBrief(s);
   save(s);
   say(`✓ ${[cmd, ...args].join(' ')}`);

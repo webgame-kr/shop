@@ -2,5 +2,5 @@
   "name": "demon-shop",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test test/", "simulate": "node scripts/simulate.js", "play": "node scripts/play.js" }
+  "scripts": { "test": "node --test test/rules.test.js", "simulate": "node scripts/simulate.js", "play": "node scripts/play.js" }
 }

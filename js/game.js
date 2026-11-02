@@ -2,7 +2,7 @@
 // → 결산 보상 → 단골 제안. 상태는 JSON 하나로 저장되고, 무작위는 시드와 난수 상태를 함께 저장한다.
 import {
   ITEMS, ITEM_IDS, CUSTOMERS, CUSTOMER_IDS, CATS, CAT_IDS, CAT_GUEST, START_SIZE, EXPAND_STEPS, MAX_LIVES, GROW_NEED,
-  canPlace, anyFit, findSpot, evaluate, mergeSet, cellsOf, isEgg, growthCheck, neighborsOf,
+  canPlace, anyFit, findSpot, evaluate, mergeSet, cellsOf, isEgg, displayName, growthCheck, neighborsOf,
 } from './rules.js';
 
 export const PICKS_PER_DAY = 2;
@@ -196,7 +196,7 @@ function prepareContract(s, id) {
       const count = Object.fromEntries(CAT_IDS.map((c) => [c, 0]));
       s.pieces.forEach((p) => { count[ITEMS[p.id].cat]++; });
       const cat = Object.entries(count).sort((a, b) => b[1] - a[1])[0][0];
-      return { cat };
+      return { cat, cost: 12 };
     }
     case 'debt': {
       const cut = Math.max(3, Math.round(basePay(s.day) * 0.3));
@@ -210,6 +210,7 @@ function prepareContract(s, id) {
 function contractEligible(s, id) {
   const c = CONTRACTS[id];
   if (s.contracts.some((a) => a.id === id && contractActive(s, a))) return false; // 같은 계약은 겹치지 않는다
+  if ((s.doneContracts ?? []).includes(id)) return false;                        // 영구 효과를 이미 받은 계약은 다시 오지 않는다
   switch (id) {
     case 'soul': return s.lives > 1;
     case 'rekindle': return s.lives < MAX_LIVES;
@@ -225,14 +226,15 @@ function contractEligible(s, id) {
 
 // 오늘 서명하면 생길 일을 문장으로. 기간·끝나면·오늘 영향은 UI가 계산해 덧붙인다.
 export function describeContract(s, id, d) {
-  const name = (uid) => { const p = s.pieces.find((q) => q.uid === uid); return p ? `${ITEMS[p.id].name}${p.g > 1 ? ` ${p.g}등급` : ''}` : '상품'; };
+  const name = (uid) => { const p = s.pieces.find((q) => q.uid === uid); return p ? `${displayName(p)}${p.g > 1 ? ` ${p.g}등급` : ''}` : '상품'; };
+  const newName = (id) => (ITEMS[id].egg ? ITEMS[id].egg.name : ITEMS[id].name); // 교환으로 받는 마수는 알로 온다
   const cat = (c) => CATS[c].name;
   const potT = d?.target;
   switch (id) {
     case 'soul': return { gain: '중급 상품 후보 3개 중 하나 선택', cost: '영혼의 불꽃 1개' };
     case 'rush': return { gain: '지금 상품 선택 2번 추가', cost: `잔금 ${d.cost}` };
     case 'vault': return { gain: `잔금 +${d.gain}`, cost: `진열 중인 ${name(d.uid)} 폐기(가장 적게 버는 상품)` };
-    case 'trade': return { gain: `${name(d.uid)} → 같은 등급 ${ITEMS[d.to].name}(같은 자리)`, cost: `잔금 ${d.cost}` };
+    case 'trade': return { gain: `${name(d.uid)} → 같은 등급 ${newName(d.to)}(같은 자리)`, cost: `잔금 ${d.cost}` };
     case 'recycle': return { gain: `${name(d.uid)}을(를) 한 등급 아래 3개로 분해`, cost: `잔금 ${d.cost} · 빈칸 2칸` };
     case 'whim': return { gain: `${ITEMS[d.kind].name} 전체의 변이 변경(${ITEMS[d.kind].muts[s.mutations[d.kind]][0]} → ${ITEMS[d.kind].muts[d.to][0]})`, cost: `잔금 ${d.cost}` };
     case 'ledger': return { gain: `잔금 +${d.gain}`, cost: `${CUSTOMERS[d.guest].name} 단골 관계와 호감도 종료${s.main === d.guest ? ' · 다음 입고부터 주력 추천 끝' : ''}` };
@@ -241,7 +243,7 @@ export function describeContract(s, id, d) {
     case 'smoke': return { gain: '연금술 상품마다 +3', cost: '장비 상품마다 -2' };
     case 'forbidden': return { gain: '마법 잡화 상품마다 +3', cost: '그날 납부액 +10' };
     case 'seal': return { gain: '납부액 -30%', cost: '표시된 빈칸 3개 사용 불가' };
-    case 'exclusive': return { gain: `입고 3번 자리를 ${cat(d.cat)} 상품으로`, cost: '3번 자리에 다른 분야가 나오지 않음' };
+    case 'exclusive': return { gain: `입고 3번 자리가 ${cat(d.cat)} 상품으로 고정`, cost: `잔금 ${d.cost ?? 12} · 3번 자리에 다른 분야와 오랜만의 분야가 나오지 않음` };
     case 'frugal': return { gain: '납부액 -15%', cost: '추가 입고 구매 불가' };
     case 'promo': return { gain: '특별 손님 보너스 2배', cost: '상품마다 기본 매출 -1' };
     case 'debt': return { gain: `오늘 납부액 -${d.cut}`, cost: `${d.due}일 차 납부액 +${d.repay}` };
@@ -251,7 +253,7 @@ export function describeContract(s, id, d) {
     case 'mergelab': return { gain: '추가 입고 이용권 1장', cost: '계약금 8', cond: '기간 안에 합성 2번' };
     case 'dept': return { gain: '잔금 +40', cost: '계약금 12', cond: '서로 다른 상품 8종류 이상 진열한 채 영업 1번' };
     case 'focus': return { gain: '그 분야 입고 비중 영구 증가', cost: '계약금 10', cond: '한 분야가 매출의 70% 이상인 영업 2번' };
-    case 'hosting': return { gain: '그 손님 호감도 +1 추가', cost: '계약금 8', cond: '특별 손님 호감도 얻기' };
+    case 'hosting': return { gain: '그 손님 호감도 +1 추가', cost: '계약금 8', cond: '분야형 손님(단골 후보)의 호감도 얻기' };
     case 'tight': return { gain: '추가 입고 이용권 1장', cost: '계약금 10', cond: '상품 8개 이상, 빈칸 2칸 이하로 영업 1번' };
   }
   return { gain: '', cost: '' };
@@ -350,7 +352,7 @@ export function newGame(seed = (Math.random() * 2 ** 32) >>> 0, startCat = 'alch
     perma: Object.fromEntries(CAT_IDS.map((c) => [c, 0])), catBoost: {},
     mutations: {}, pendingMutation: null,
     favor: {}, regulars: [], regularOffer: null, main: null, everMain: false,
-    priority: null, tickets: 0, freeTickets: 0, mergeCount: 0, bonusPick: null, recentCats: [],
+    priority: null, tickets: 0, freeTickets: 0, mergeCount: 0, bonusPick: null, recentCats: [], recentContracts: [], doneContracts: [],
     grace: false, rerolls: 0, extras: 0, bonusGradeNext: false, forfeitReward: false,
     rewardOffer: null, undo: [], last: null, final: null, briefSeen: false,
   };
@@ -379,17 +381,21 @@ function startDay(s) {
 export function seeBrief(s) { s.briefSeen = true; }
 
 // 즉시·기간·조건에서 하나씩. 같은 유형에서 서로 모순되는 계약(붉은 간판/보랏빛 연기)은 함께 나오지 않는다.
-function drawContracts(s) {
+export function drawContracts(s) {
   const ids = [];
   const data = {};
   for (const type of ['instant', 'period', 'cond']) {
-    const pool = TYPE_IDS[type].filter((id) => contractEligible(s, id));
+    const eligible = TYPE_IDS[type].filter((id) => contractEligible(s, id));
+    // 최근 두 번의 제안에 나온 계약은 쉬게 하되, 남는 게 없으면 다시 쓴다
+    const fresh = eligible.filter((id) => !(s.recentContracts ?? []).includes(id));
+    const pool = fresh.length ? fresh : eligible;
     while (pool.length) {
       const id = pool.splice(Math.floor(rand(s) * pool.length), 1)[0];
       const d = prepareContract(s, id);
       if (d) { ids.push(id); data[id] = d; break; }
     }
   }
+  s.recentContracts = [...(s.recentContracts ?? []), ...ids].slice(-6);
   return ids.length ? { ids, data } : null;
 }
 
@@ -449,13 +455,15 @@ function drawSlot(s, role, taken, w) {
   // 3번: 독점 입고 계약이면 그 분야, 아니면 최근 덜 나온 분야를 우선
   const { offer } = modsFor(s);
   if (offer.cat) return pick(all.filter((id) => ITEMS[id].cat === offer.cat), 'exclusive', { cat: offer.cat });
+  const owned = new Set(s.pieces.map((p) => p.id));
+  const unowned = all.filter((id) => !owned.has(id));
   const recent = s.recentCats.slice(-9);
   const rare = CAT_IDS.filter((c) => !recent.includes(c));
   if (rare.length && recent.length >= 6) {
-    const r = pick(all.filter((id) => rare.includes(ITEMS[id].cat)), 'new', { rare: true });
+    const r = pick(unowned.filter((id) => rare.includes(ITEMS[id].cat)), 'new', { rare: true });
     if (r) return r;
   }
-  return pick(all, 'new');
+  return pick(unowned, 'new') ?? pick(all, 'new');
 }
 
 // 후보 세 자리: 1 주력 단골(또는 시작 분야) · 2 보유 상품 · 3 새로운 상품. 같은 상품은 한 묶음에 한 번.
@@ -750,6 +758,7 @@ export function sign(s, id) {
   s.contractOffer = null;
   s.signed++;
   if (c.type === 'cond') s.balance -= c.deposit;
+  else if (c.type === 'period' && d?.cost) s.balance -= d.cost;
   if (c.type !== 'instant') {
     s.contracts.push({ id, day: s.day, data: d, progress: 0, lastCheck: 0, merges0: s.mergeCount, favor0: { ...s.favor } });
     return true;
@@ -758,7 +767,14 @@ export function sign(s, id) {
     case 'soul': s.lives--; addPicks(s, 1, 2); break;
     case 'rush': s.balance -= d.cost; addPicks(s, 2); break;
     case 'vault': s.pieces = s.pieces.filter((p) => p.uid !== d.uid); s.balance += d.gain; break;
-    case 'trade': { const p = s.pieces.find((q) => q.uid === d.uid); s.balance -= d.cost; p.id = d.to; maybeMutation(s, p.id, p.g); break; }
+    case 'trade': {
+      const p = s.pieces.find((q) => q.uid === d.uid);
+      s.balance -= d.cost;
+      p.id = d.to;
+      if (ITEMS[p.id].egg) p.grow = 0; else delete p.grow;
+      maybeMutation(s, p.id, p.g);
+      break;
+    }
     case 'recycle': {
       const spots = recycleSpots(s, d.uid);
       const p = s.pieces.find((q) => q.uid === d.uid);
@@ -811,7 +827,7 @@ function condMet(s, c, ev, sales) {
 function condReward(s, c) {
   switch (c.id) {
     case 'potions': s.bonusPick = { cat: 'alch' }; break;
-    case 'armsfair': s.perma.gear += 2; break;
+    case 'armsfair': s.perma.gear += 2; s.doneContracts = [...(s.doneContracts ?? []), 'armsfair']; break;
     case 'bookfair': s.bonusPick = { cat: 'magic' }; break;
     case 'mergelab': case 'tight': s.tickets++; break;
     case 'dept': s.balance += 40; break;
