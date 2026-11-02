@@ -473,18 +473,17 @@ function render() {
 
   renderStrip();
 
-  if (s.phase === 'pick') {
-    $('board').parentElement.hidden = true;
-    renderOffers(coach);
-    renderActions(coach);
-    return;
-  }
-  $('board').parentElement.hidden = false;
+  // 후보를 고르는 동안에도 진열대를 작게 보여 준다(보기 전용). 고른 후보와 같은 상품·등급은 표시한다.
+  const picking = s.phase === 'pick';
+  const shelf = $('board').parentElement;
+  shelf.hidden = false;
+  shelf.classList.toggle('peek', picking);
+  const pickId = picking && pickedOffer !== null ? s.offers[pickedOffer]?.id : null;
 
   // 진열대
   const board = $('board');
   const vdim = viewDim();
-  sizeBoard(board, vdim, 34);
+  sizeBoard(board, vdim, picking ? 24 : 34);
   const g = ghostPiece();
   const matUids = new Set(merging ? merging.set.map((q) => q.uid) : []);
   // 선택한 상품이 받는 효과의 출처: 화살표와 받는 양
@@ -501,12 +500,15 @@ function render() {
     if (!merging && sel?.kind === 'piece' && sel.uid === p.uid) cls.push('selected', ghost ? 'lifted' : '');
     if (srcGive.has(p.uid)) cls.push('link-src');
     if (spark.has(p.uid)) cls.push('spark');
+    const match = pickId && p.id === pickId && p.g === s.offerGrade && !isEgg(p);
+    if (match) cls.push('match');
     if (press === p.uid) cls.push('press');
     let tag = '';
     if (prevEv && p.uid !== g?.uid && prevEv.items.has(p.uid)) {
       const gain = prevEv.items.get(p.uid).total - r.total;
       if (gain) tag = `<span class="ptag ${gain > 0 ? 'up' : 'bad'}">${gain > 0 ? '+' : ''}${gain}</span>`;
     } else if (srcGive.get(p.uid)) tag = `<span class="ptag src">+${srcGive.get(p.uid)}</span>`;
+    else if (match) tag = '<span class="ptag up">같은 상품</span>';
     const bonus = r.bonuses.some((b) => b.amount > 0);
     const sub = `<span class="per">${bonus ? '<b>✦</b> ' : ''}하루 ${(prevEv?.items.get(p.uid) ?? r).total}</span>`;
     html += pieceHTML(vdim, piece, { cls: cls.join(' '), sub, tag });
@@ -520,6 +522,11 @@ function render() {
   spark = new Set();
   press = null;
 
+  if (picking) {
+    renderOffers(coach);
+    renderActions(coach);
+    return;
+  }
   renderPanel(ev, prevEv, coach);
   renderActions(coach);
 }
@@ -584,7 +591,7 @@ function whyText(o, i) {
     main: `${SHORT[s.main] ?? ''} 추천`, start: '시작 분야 추천', same: '보유 상품', new: '새로운 상품', exclusive: '독점 입고', reward: '보상 입고',
   }[o.why] ?? '';
   const extra = [];
-  if (o.why === 'same' && same > 0 && same < 3) extra.push(`합성까지 ${3 - same - 1 > 0 ? `${3 - same - 1}개` : '1개'}`);
+  if (o.why === 'same' && same > 0 && same < 3) extra.push(same === 2 ? '고르면 합성 가능' : '합성까지 1개 더');
   if (o.rare) extra.push('오랜만의 분야');
   if (o.prio) extra.push('★ 우선 입고');
   return `${i + 1} · ${[role, ...extra].join(' · ')}`;

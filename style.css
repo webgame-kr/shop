@@ -769,3 +769,9 @@ body.tut .start-foot, body.tut #btn-coach-skip { display: none !important; }
 .detail .cat { color: #fff; font-size: 11.5px; font-weight: 700; border-radius: 6px; padding: 2px 8px; flex: none; }
 .detail.egg .dh { flex-wrap: wrap; }
 .filters button { display: inline-flex; align-items: center; }
+
+/* 입고 중 진열대 미리보기: 보기 전용, 고른 후보와 같은 상품 강조 */
+.shelf.peek { margin-bottom: 4px; }
+.shelf.peek .board { pointer-events: none; }
+.piece.match { z-index: 2; }
+.piece.match .pc { outline: .6cqw solid var(--gold); outline-offset: -.6cqw; box-shadow: 0 0 2.4cqw rgba(242, 196, 107, .7); }
