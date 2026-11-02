@@ -525,3 +525,29 @@ test('후반 성장: 팔기·등급 올리기·넘기기 보너스, 떠돌이 �
     assert.ok(o2.complete);
   }
 });
+
+test('같은 크기 상품끼리 자리 바꾸기: 가로·세로 2칸은 회전해서 맞바꾸고, 크기가 다르면 안 된다', () => {
+  const s = arrange(50);
+  s.pieces = [P('potion', 0, 0), P('ruby', 4, 3), P('lavabread', 0, 2), P('candle', 4, 0), P('armor', 2, 0)];
+  const [potion, ruby, bread, candle, armor] = s.pieces;
+  assert.ok(G.swapPieces(s, potion.uid, ruby.uid));
+  assert.deepEqual([potion.x, potion.y, ruby.x, ruby.y], [4, 3, 0, 0]);
+  // 가로 2칸 빵과 세로 2칸 촛대: 서로 회전해서 상대 칸을 그대로 차지한다
+  assert.ok(G.canSwap(s, bread.uid, candle.uid));
+  assert.ok(G.swapPieces(s, bread.uid, candle.uid));
+  assert.deepEqual(cellsOf(bread).sort().join(' '), [[4, 0], [4, 1]].sort().join(' '));
+  assert.deepEqual(cellsOf(candle).sort().join(' '), [[0, 2], [1, 2]].sort().join(' '));
+  // 크기가 다르면 바꿀 수 없다
+  assert.equal(G.canSwap(s, armor.uid, potion.uid), false);
+  assert.equal(G.swapPieces(s, armor.uid, potion.uid), false);
+  // 되돌리기
+  assert.ok(G.undo(s));
+  const after = s.pieces.find((p) => p.id === 'lavabread');
+  assert.deepEqual([after.x, after.y, after.rot], [0, 2, 0]);
+  // 입고(후보 고르기) 중에도 옮기기·바꾸기가 된다
+  const t = G.newGame(51);
+  t.pieces = [P('potion', 0, 0), P('herb', 1, 0)];
+  assert.equal(t.phase, 'pick');
+  assert.ok(G.swapPieces(t, t.pieces[0].uid, t.pieces[1].uid));
+  assert.ok(G.movePiece(t, t.pieces[0].uid, 3, 3, 0));
+});

@@ -2,7 +2,7 @@
 // → 결산 보상 → 단골 제안. 상태는 JSON 하나로 저장되고, 무작위는 시드와 난수 상태를 함께 저장한다.
 import {
   ITEMS, ITEM_IDS, CUSTOMERS, CUSTOMER_IDS, CATS, CAT_IDS, CAT_GUEST, START_SIZE, EXPAND_STEPS, EXPAND_SCHEDULE, MAX_SIZE, dimForDay, MAX_LIVES, GROW_NEED,
-  canPlace, anyFit, findSpot, evaluate, mergeSet, cellsOf, isEgg, displayName, growthCheck, neighborsOf, gradeBase,
+  canPlace, anyFit, findSpot, evaluate, mergeSet, cellsOf, shapeOf, isEgg, displayName, growthCheck, neighborsOf, gradeBase,
 } from './rules.js';
 
 export const PICKS_PER_DAY = 2;
@@ -663,6 +663,28 @@ export function movePiece(s, uid, x, y, rot) {
 // 진열대에서 빼면 기본 매출의 1.5배(알은 알 매출)를 잔금으로 돌려받는다
 export function sellValue(p) {
   return isEgg(p) ? ITEMS[p.id].egg.base : Math.max(1, Math.round(gradeBase(p.id, p.g) * 1.5));
+}
+
+/* ---------- 같은 크기 상품끼리 자리 바꾸기 ---------- */
+
+// a가 b의 칸을 그대로 차지하게 하는 회전(지금 회전을 먼저 본다). 안 되면 null.
+export function swapRot(a, b) {
+  const target = JSON.stringify(shapeOf(b.id, b.rot));
+  return [a.rot, ...[0, 1, 2, 3].filter((r) => r !== a.rot)].find((r) => JSON.stringify(shapeOf(a.id, r)) === target) ?? null;
+}
+export function canSwap(s, ua, ub) {
+  const a = s.pieces.find((p) => p.uid === ua), b = s.pieces.find((p) => p.uid === ub);
+  return !!a && !!b && a !== b && swapRot(a, b) !== null && swapRot(b, a) !== null;
+}
+export function swapPieces(s, ua, ub) {
+  if (!prep(s) || !canSwap(s, ua, ub)) return false;
+  snapshot(s);
+  const a = s.pieces.find((p) => p.uid === ua), b = s.pieces.find((p) => p.uid === ub);
+  const ra = swapRot(a, b), rb = swapRot(b, a);
+  [a.x, a.y, b.x, b.y] = [b.x, b.y, a.x, a.y];
+  a.rot = ra;
+  b.rot = rb;
+  return true;
 }
 
 export function discard(s, uid) {

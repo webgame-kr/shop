@@ -799,9 +799,19 @@ body.tut .start-foot, body.tut #btn-coach-skip { display: none !important; }
 .expand-card.soon { background: var(--card); border-style: dashed; }
 .rw .pv { display: block; margin-top: 4px; font-size: 12.5px; font-weight: 700; color: #2f7a52; }
 .shelf { position: relative; }
-.shelf-tools { display: flex; justify-content: flex-end; margin: 8px 0 -6px; }
-.shelf-tools:has(.zoom-btn[hidden]) { display: none; }
+.shelf-tools { display: flex; justify-content: flex-end; gap: 8px; margin: 8px 0 -6px; }
+.shelf-tools[hidden] { display: none; }
+.shelf-tools .tidy-btn { margin-right: auto; }
 .zoom-btn { background: var(--card2); color: var(--ink); border: 1.5px solid var(--line); border-radius: 999px; padding: 3px 12px; font-size: 12px; font-weight: 700; cursor: pointer; }
 .shelf.zoomed { overflow: auto; -webkit-overflow-scrolling: touch; max-height: 62dvh; }
 .shelf.zoomed .board { width: 165%; touch-action: pan-x pan-y; }
 .zoom-hint { margin: 6px 0 0; font-size: 12px; color: #9fd8ff; text-align: center; }
+
+/* 입고 중 정리 · 자리 바꾸기 */
+.zoom-btn.tidy-btn { background: #2d3b2f; border-color: #6fbf8a; color: #bdf0cc; }
+.zoom-btn.tidy-btn.on { background: #6fbf8a; color: #13241a; }
+.tidy-note { display: grid; gap: 4px; background: #23302a; border: 1.5px solid #6fbf8a; border-radius: 14px; padding: 10px 12px; font-size: 13px; }
+.tidy-note b { font-family: var(--dh); font-weight: 400; font-size: 18px; color: #bdf0cc; }
+.ptag.swap { background: #6fbf8a; border-color: #6fbf8a; color: #13241a; }
+.piece.swap-partner { z-index: 3; }
+.piece.swap-partner .pc { outline: .55cqw dashed #6fbf8a; outline-offset: -.55cqw; box-shadow: 0 0 2cqw rgba(111, 191, 138, .55); }

@@ -187,7 +187,8 @@ const HELP = `명령:
   place <x> <y> [회전]   손에 든 상품 놓기
   skip                   이번 입고 넘기기(잔금 조금)
   reroll / reroll1       후보 전체 새로고침(잔금) / 1번 자리만(무료 이용권)
-  move <번호> <x> <y> [회전]   진열된 상품 옮기기
+  move <번호> <x> <y> [회전]   진열된 상품 옮기기(입고 중에도 가능)
+  swap <번호> <번호>     같은 크기 상품끼리 자리 바꾸기(가로·세로 2칸은 회전해서)
   discard <번호>         상품 팔기(기본 매출 1.5배를 잔금으로)
   upgrade <번호>         잔금(또는 이용권)으로 한 등급 올리기 · 하루 한 번, Ⅲ등급까지, 알 제외
   merge <번호|hand>      같은 상품·등급 3개 합성
@@ -224,6 +225,7 @@ const ACT = {
   reroll1: (s) => G.rerollSlot1(s),
   move: (s) => G.movePiece(s, num(args[0], '번호'), num(args[1], 'x'), num(args[2], 'y'), args[3] ? num(args[3], '회전') : s.pieces.find((p) => p.uid === Number(args[0]))?.rot ?? 0),
   discard: (s) => G.discard(s, num(args[0], '번호')),
+  swap: (s) => G.swapPieces(s, num(args[0], '번호'), num(args[1], '번호')),
   upgrade: (s) => G.upgrade(s, num(args[0], '번호')),
   order: (s) => G.order(s, args[0]),
   merge: (s) => G.merge(s, args[0] === 'hand' ? 'hand' : num(args[0], '번호')),
